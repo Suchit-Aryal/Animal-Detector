@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Events</h1>
+<div class="toolbar">
+  <div class="seg">
+    {% for r in ranges %}<a href="?range={{ r }}&gap={{ gap }}" class="{{ 'on' if r == rng }}">{{ r }}</a>{% endfor %}
+  </div>
+  <form method="get" class="inline">
+    <input type="hidden" name="range" value="{{ rng }}">
+    <label class="muted">Merge detections closer than
+      <input type="number" name="gap" min="1" max="3600" value="{{ gap }}" style="width:90px"> s</label>
+    <button type="submit" class="ghost">Apply</button>
+  </form>
+</div>
+<p class="muted">An event is one run of the same class in the same source, where no two detections are more than {{ gap }} s apart. {{ total_rows }} detections in this window; newest events first.</p>
+<div class="gallery">
+  {% for e in events %}
+  <figure class="tile">
+    {% if e.snapshot %}
+      <a class="lb-link" data-group="events" data-cap="{{ e['class'] }} · {{ e.start_ts }}" href="{{ url_for('snapshots', name=e.snapshot) }}">
+        <img src="{{ url_for('snapshots', name=e.snapshot) }}" alt="{{ e['class'] }} event snapshot" loading="lazy"></a>
+    {% else %}
+      <div style="height:130px;display:flex;align-items:center;justify-content:center" class="muted">no snapshot</div>
+    {% endif %}
+    <figcaption>
+      <span class="tag">{{ e['class'] }}</span>
+      <span class="pill">{{ e.count }} det.</span>
+      {% if e.tracks %}<span class="pill">{{ e.tracks }} track{{ 's' if e.tracks != 1 }}</span>{% endif %}<br>
+      <span class="muted">{{ e.start_ts }}{% if e.duration %} → {{ e.end_ts[11:19] }} ({{ e.duration }} s){% endif %}</span><br>
+      <span class="muted">{{ e.source }} · best {{ '%.2f'|format(e.max_conf) }}</span>
+    </figcaption>
+  </figure>
+  {% else %}
+    <p class="muted">No events in this window.</p>
+  {% endfor %}
+</div>
+{% endblock %}

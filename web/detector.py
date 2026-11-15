@@ -251,6 +251,8 @@ def process_media(path: Path, label: str, job: dict, detector: Detector, logger:
     last_dets = []
     counts = {"animal": 0, "person": 0, "suppressed": 0, "rows_logged": 0}
     tracker = detector.new_tracker()  # this clip's own track IDs
+    job["markers"] = []  # {t, class} for the timeline on the job page
+    job["duration"] = round(total / fps, 2) if total else None
     try:
         while True:
             ok, frame = cap.read()
@@ -265,6 +267,9 @@ def process_media(path: Path, label: str, job: dict, detector: Detector, logger:
                 counts["rows_logged"] += logger.log(source_id, f"upload:{label}", t, last_dets, ann, clip_time=round(t, 2))
                 counts["animal"] += len(animals)
                 counts["person"] += len(persons)
+                for a in animals:  # one mark per class per half second, so the bar stays readable
+                    if not any(m["class"] == a.name and abs(m["t"] - t) < 0.5 for m in job["markers"][-20:]):
+                        job["markers"].append({"t": round(t, 2), "class": a.name})
             else:
                 ann = annotate(frame, last_dets)  # keep boxes on in-between frames
             vw.write(ann)

@@ -139,9 +139,54 @@ def live():
                            per_text=", ".join(f"{k}={v:g}" for k, v in (CFG.get("animal_conf_per_class") or {}).items()))
 
 
+def epoch_of(ts: str) -> float:
+    try:
+        return datetime.fromisoformat(ts).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def group_events(rows: list, gap: float) -> list:
+    """Merge animal detections of the same class in the same source into one event when they are
+    no more than gap seconds apart. Uploads use clip time; cameras use wall-clock time."""
+    def clock(r):
+        return r["clip_time"] if r["clip_time"] is not None else epoch_of(r["ts"])
+    events = []
+    for r in sorted(rows, key=lambda r: (r["source"], r["class_name"], clock(r))):
+        c = clock(r)
+        last = events[-1] if events else None
+        if last and last["source"] == r["source"] and last["class"] == r["class_name"] and c - last["_end"] <= gap:
+            last["_end"] = c
+            last["end_ts"] = r["ts"]
+            last["count"] += 1
+            last["tracks"].add(r["track_id"])
+            if r["snapshot"] and r["confidence"] > last["best_conf"]:
+                last.update(snapshot=r["snapshot"], best_conf=r["confidence"])
+            last["max_conf"] = max(last["max_conf"], r["confidence"])
+        else:
+            events.append({"source": r["source"], "class": r["class_name"], "_start": c, "_end": c,
+                           "start_ts": r["ts"], "end_ts": r["ts"], "count": 1, "tracks": {r["track_id"]},
+                           "max_conf": r["confidence"], "best_conf": r["confidence"],
+                           "snapshot": r["snapshot"], "clip": r["clip_time"] is not None})
+    for e in events:
+        e["duration"] = round(e["_end"] - e["_start"], 1)
+        e["tracks"] = len({t for t in e["tracks"] if t is not None})
+    return sorted(events, key=lambda e: e["start_ts"], reverse=True)
+
+
 @app.route("/events")
 def events_page():
-    return redirect(url_for("log_page"))  # replaced in the events batch
+    rng = request.args.get("range", "24h")
+    if rng not in RANGES and rng != "all":
+        rng = "24h"
+    gap = float(int_arg("gap", 30, 1, 3600))
+    since = None
+    if rng != "all":
+        since = (datetime.now().astimezone() - timedelta(hours=RANGES[rng])).isoformat(timespec="seconds")
+    rows = db.search(kind="animal", since=since, limit=5000)
+    events = group_events(rows, gap)
+    return render_template("events.html", page="events", events=events[:200], rng=rng, gap=int(gap),
+                           ranges=list(RANGES) + ["all"], total_rows=len(rows))
 
 
 @app.route("/settings")
@@ -202,7 +247,7 @@ def api_job(job_id):
     job = JOBS.get(job_id)
     if job is None:
         abort(404)
-    return jsonify({k: job[k] for k in ("status", "progress", "outputs", "counts", "error")})
+    return jsonify({k: job.get(k) for k in ("status", "progress", "outputs", "counts", "error", "markers", "duration")})
 
 
 @app.route("/outputs/<path:name>")

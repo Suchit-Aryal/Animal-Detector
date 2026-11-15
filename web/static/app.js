@@ -78,6 +78,35 @@
   const counts = document.getElementById("counts");
   const errorEl = document.getElementById("error");
   const outputs = document.getElementById("outputs");
+  // Timeline: a bar for the clip with a mark per animal detection; click a mark to seek the video.
+  const COLORS = { cow: "#5b9dff", dog: "#f59e0b", goat: "#a78bfa", cat: "#f472b6", sheep: "#34d399" };
+  let drawn = false;
+  function drawTimeline(duration, markers) {
+    const tl = document.getElementById("timeline");
+    const track = document.getElementById("tl-track");
+    if (!markers.length) { tl.hidden = true; return; }
+    tl.hidden = false;
+    if (drawn && track.dataset.n === String(markers.length)) return;
+    drawn = true;
+    track.dataset.n = String(markers.length);
+    track.innerHTML = "";
+    const classes = [...new Set(markers.map((m) => m.class))];
+    for (const m of markers) {
+      const d = document.createElement("button");
+      d.type = "button";
+      d.className = "tl-mark";
+      d.style.left = `${Math.min(100, (100 * m.t) / duration)}%`;
+      d.style.background = COLORS[m.class] || "#94a3b8";
+      d.title = `${m.class} at ${m.t.toFixed(1)} s`;
+      d.addEventListener("click", () => {
+        const v = document.getElementById("clip");
+        if (v) { v.currentTime = m.t; v.play().catch(() => {}); }
+      });
+      track.appendChild(d);
+    }
+    document.getElementById("tl-legend").innerHTML = classes.map((c) =>
+      `<span class="tl-key"><i style="background:${COLORS[c] || "#94a3b8"}"></i>${c}</span>`).join("");
+  }
   function render(j) {
     status.textContent = j.status;
     progress.textContent = j.progress;
@@ -87,12 +116,13 @@
         `animal boxes dropped because they overlap a person: ${j.counts.suppressed}, rows logged: ${j.counts.rows_logged}`;
     }
     if (j.error) errorEl.textContent = j.error;
+    if (j.duration && j.markers) drawTimeline(j.duration, j.markers);
     if (j.status === "done") {
       outputs.innerHTML = "";
       for (const o of j.outputs) {
         if (o.kind === "video") {
           outputs.insertAdjacentHTML("beforeend",
-            `<video class="out" controls src="/outputs/${o.url}"></video>`);
+            `<video class="out" id="clip" controls src="/outputs/${o.url}"></video>`);
         } else {
           outputs.insertAdjacentHTML("beforeend",
             `<img class="frame" src="/outputs/${o.url}" alt="annotated image">`);

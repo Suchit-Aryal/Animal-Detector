@@ -6,6 +6,11 @@
      Progress: <span id="progress">{{ job.progress }}</span>%</p>
   <p id="counts" class="muted"></p>
   <p id="error" class="bad"></p>
+  <div id="timeline" class="timeline" hidden>
+    <div class="tl-track" id="tl-track"></div>
+    <p class="muted">Each mark is an animal detection at that second of the clip. Click a mark to jump the video there.</p>
+    <div class="tl-legend" id="tl-legend"></div>
+  </div>
   <div id="outputs"></div>
   <p class="muted">Detections are in the <a href="{{ url_for('log_page') }}">Log</a>. People are shown in orange and never logged as animals.</p>
 </section>
