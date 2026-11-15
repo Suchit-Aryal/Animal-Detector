@@ -8,6 +8,18 @@
   <div class="card stat"><span class="label">Last animal seen</span><span class="big small" id="c-last">–</span></div>
 </div>
 
+{% if empty %}
+<div class="card empty">
+  <h2>Nothing logged yet</h2>
+  <p class="muted">Upload a clip or start a camera below. Or load sample data to see the pages filled in.</p>
+  <form method="post" action="{{ url_for('demo_load') }}"><button type="submit">Load demo data</button></form>
+</div>
+{% elif demo_loaded %}
+<div class="demo-note row no-print">
+  <span>Showing <strong>demo data</strong> (invented, for looking around). Real detections are kept apart.</span>
+  <form method="post" action="{{ url_for('demo_clear') }}" class="inline"><button type="submit" class="ghost">Clear demo data</button></form>
+</div>
+{% endif %}
 <div class="row notify no-print">
   <span class="muted">Alerts:</span>
   <label><input type="checkbox" id="opt-sound"> sound</label>

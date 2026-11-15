@@ -10,8 +10,10 @@ and the missing-animal alert. sources: last time each source produced a frame, w
 reference clock for "present" versus "missing". alerts: missing-animal alerts.
 """
 
+import random
 import sqlite3
 import threading
+from datetime import timedelta
 from pathlib import Path
 
 SCHEMA = """
@@ -216,6 +218,80 @@ class DetectionDB:
         sql += " GROUP BY hour, class_name ORDER BY hour DESC, class_name"
         with self._lock:
             return [dict(r) for r in self._conn.execute(sql, args).fetchall()]
+
+    DEMO_SOURCE = "demo:sample"
+    DEMO_SOURCE_ID = "demo-sample"
+
+    def demo_loaded(self) -> bool:
+        with self._lock:
+            return self._conn.execute("SELECT 1 FROM detections WHERE source = ? LIMIT 1",
+                                      (self.DEMO_SOURCE,)).fetchone() is not None
+
+    def clear_demo(self) -> None:
+        """Remove only the demo rows (source 'demo:sample'). Real rows are never touched."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM detections WHERE source = ?", (self.DEMO_SOURCE,))
+            self._conn.execute("DELETE FROM alerts WHERE source = ?", (self.DEMO_SOURCE,))
+            self._conn.execute("DELETE FROM tracks WHERE source_id = ?", (self.DEMO_SOURCE_ID,))
+            self._conn.execute("DELETE FROM sources WHERE source_id = ?", (self.DEMO_SOURCE_ID,))
+
+    def load_demo(self, snapshots: list, now) -> dict:
+        """Fill the log with about a week of invented detections so the pages look alive.
+        Clears earlier demo rows first. Snapshots are picked from real snapshot files (may be empty)."""
+        self.clear_demo()
+        rnd = random.Random(7)
+        classes = ["cow", "dog", "goat", "cat", "sheep"]
+        weights = [0.35, 0.25, 0.15, 0.15, 0.10]
+        day_hours = [6, 7, 8, 9, 10, 11, 16, 17, 18, 19, 20, 21]
+        det, trk, alerts = [], [], []
+        for tid in range(1, 41):
+            cls = rnd.choices(classes, weights)[0]
+            day = now - timedelta(days=rnd.randint(0, 6))
+            start = day.replace(hour=rnd.choice(day_hours), minute=rnd.randint(0, 59), second=0, microsecond=0)
+            if start > now:
+                start -= timedelta(days=1)
+            end = start + timedelta(seconds=rnd.randint(8, 240))
+            snap = rnd.choice(snapshots) if snapshots and rnd.random() < 0.6 else None
+            frames = 0
+            t = start
+            while t <= end:
+                conf = round(rnd.uniform(0.52, 0.97), 2)
+                x1, y1 = rnd.uniform(0, 400), rnd.uniform(0, 260)
+                det.append((t.isoformat(timespec="seconds"), "animal", cls, conf, self.DEMO_SOURCE, None,
+                            x1, y1, x1 + rnd.uniform(80, 220), y1 + rnd.uniform(60, 180),
+                            snap if frames == 0 else None, tid))
+                frames += 1
+                t += timedelta(seconds=20)
+            trk.append((self.DEMO_SOURCE_ID, tid, cls, self.DEMO_SOURCE, 0, start.timestamp(), end.timestamp(),
+                        start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds"), frames, snap))
+        # two animals seen just now, so the Animals page shows some 'present' rows
+        for tid, cls in ((41, "cow"), (42, "goat")):
+            t0 = now - timedelta(seconds=rnd.randint(5, 20))
+            det.append((t0.isoformat(timespec="seconds"), "animal", cls, 0.9, self.DEMO_SOURCE, None,
+                        100.0, 100.0, 260.0, 240.0, None, tid))
+            trk.append((self.DEMO_SOURCE_ID, tid, cls, self.DEMO_SOURCE, 0, t0.timestamp(), t0.timestamp(),
+                        t0.isoformat(timespec="seconds"), t0.isoformat(timespec="seconds"), 1, None))
+        for _ in range(90):
+            t = now - timedelta(days=rnd.randint(0, 6), minutes=rnd.randint(0, 1400))
+            det.append((t.isoformat(timespec="seconds"), "person", "person", round(rnd.uniform(0.4, 0.95), 2),
+                        self.DEMO_SOURCE, None, 50.0, 40.0, 200.0, 300.0, None, None))
+        for tid in (3, 9):
+            t = now - timedelta(hours=rnd.randint(1, 60))
+            alerts.append((t.isoformat(timespec="seconds"), self.DEMO_SOURCE_ID, tid, "cow", self.DEMO_SOURCE,
+                           t.isoformat(timespec="seconds"),
+                           f"cow #{tid} not seen for 10 min ({self.DEMO_SOURCE})", None))
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO sources (source_id, label, is_camera, last_clock, last_ts) VALUES (?,?,?,?,?)",
+                (self.DEMO_SOURCE_ID, self.DEMO_SOURCE, 0, now.timestamp(), now.isoformat(timespec="seconds")))
+            self._conn.executemany(f"INSERT INTO detections ({DET_COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", det)
+            self._conn.executemany(
+                "INSERT INTO tracks (source_id, track_id, class_name, source_label, is_camera, first_clock, last_clock, "
+                "first_ts, last_ts, frames, snapshot) VALUES (?,?,?,?,?,?,?,?,?,?,?)", trk)
+            self._conn.executemany(
+                "INSERT INTO alerts (ts, source_id, track_id, class_name, source, last_seen, message, snapshot) "
+                "VALUES (?,?,?,?,?,?,?,?)", alerts)
+        return {"detections": len(det), "tracks": len(trk), "alerts": len(alerts)}
 
     def hour_of_day_counts(self, kind: str = "animal", since=None) -> list:
         """Rows of (hod, class_name, n): when of the day detections happen (0-23, local time)."""

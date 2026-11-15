@@ -132,6 +132,9 @@ def live():
                            cam_error=request.args.get("cam_error"),
                            settings_error=request.args.get("settings_error"),
                            settings_saved=request.args.get("settings_saved"),
+                           demo_loaded=db.demo_loaded(), empty=(db.summary()["animal"]["count"] == 0
+                                                               and db.summary()["person"]["count"] == 0),
+                           demo_msg=request.args.get("demo"),
                            cfg=CFG,
                            per_text=", ".join(f"{k}={v:g}" for k, v in (CFG.get("animal_conf_per_class") or {}).items()))
 
@@ -398,6 +401,19 @@ def stats_page():
                            animal_totals=animal_totals, animal_last=animal_last,
                            person_totals=person_totals, summary=summary,
                            chart=chart_svg(animal_hours, hours))
+
+
+@app.route("/demo/load", methods=["POST"])
+def demo_load():
+    names = [p.name for p in SNAPS.glob("*.jpg")][:200]
+    db.load_demo(names, datetime.now().astimezone())
+    return redirect(url_for("live", demo=1))
+
+
+@app.route("/demo/clear", methods=["POST"])
+def demo_clear():
+    db.clear_demo()
+    return redirect(url_for("live"))
 
 
 @app.route("/report")
