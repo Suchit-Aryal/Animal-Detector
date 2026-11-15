@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Snapshot gallery</h1>
+<form method="get" class="filters">
+  <label>Class
+    <select name="class">
+      <option value="">any</option>
+      {% for c in classes %}<option value="{{ c }}" {{ 'selected' if c == cls }}>{{ c }}</option>{% endfor %}
+    </select></label>
+  <label>From <input type="text" name="since" value="{{ since }}" placeholder="2026-11-15"></label>
+  <label>To <input type="text" name="until" value="{{ until }}"></label>
+  <button type="submit">Filter</button>
+</form>
+{% for e in errors %}<p class="bad">{{ e }}</p>{% endfor %}
+<p class="chips">
+  <a class="chip {{ 'on' if not cls }}" href="?{% if since %}since={{ since | urlencode }}&{% endif %}{% if until %}until={{ until | urlencode }}{% endif %}">all</a>
+  {% for c in classes %}<a class="chip {{ 'on' if c == cls }}" href="?class={{ c | urlencode }}{% if since %}&since={{ since | urlencode }}{% endif %}{% if until %}&until={{ until | urlencode }}{% endif %}">{{ c }}</a>{% endfor %}
+</p>
+<div class="gallery">
+  {% for t in tiles %}
+    <figure class="tile">
+      <a href="{{ url_for('snapshots', name=t.snapshot) }}" target="_blank" rel="noopener">
+        <img src="{{ url_for('snapshots', name=t.snapshot) }}" alt="{{ t.classes }} snapshot" loading="lazy">
+      </a>
+      <figcaption><span class="tag">{{ t.classes }}</span><br><span class="muted">{{ t.ts }}</span><br><span class="muted">{{ t.source }}</span></figcaption>
+    </figure>
+  {% else %}
+    <p class="muted">No snapshots match these filters.</p>
+  {% endfor %}
+</div>
+<p class="pager">
+  {% if pg > 1 %}<a href="?{{ base_qs }}&page={{ pg - 1 }}">&larr; newer</a>{% endif %}
+  {% if tiles | length == per_page %}<a href="?{{ base_qs }}&page={{ pg + 1 }}">older &rarr;</a>{% endif %}
+</p>
+{% endblock %}

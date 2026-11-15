@@ -104,3 +104,31 @@ class DetectionDB:
         with self._lock:
             return [r[0] for r in self._conn.execute(
                 "SELECT DISTINCT class_name FROM detections WHERE kind = ? ORDER BY class_name", (kind,))]
+
+    def gallery(self, class_name=None, source=None, since=None, until=None, limit=60, offset=0) -> list:
+        """One tile per snapshot (animal rows only), newest first, with the classes in that frame."""
+        clause, args = self._where("animal", class_name, source, since, until)
+        sql = (f"SELECT snapshot, MAX(ts) AS ts, GROUP_CONCAT(DISTINCT class_name) AS classes, "
+               f"MAX(source) AS source FROM detections {clause} AND snapshot IS NOT NULL "
+               f"GROUP BY snapshot ORDER BY ts DESC LIMIT ? OFFSET ?")
+        with self._lock:
+            return [dict(r) for r in self._conn.execute(sql, (*args, limit, offset)).fetchall()]
+
+    def summary(self, since=None) -> dict:
+        """Counts and last-seen values for the dashboard counters and the live alert."""
+        with self._lock:
+            out = {}
+            for kind in ("animal", "person"):
+                sql = "SELECT COUNT(*), MAX(ts) FROM detections WHERE kind = ?"
+                args = [kind]
+                if since:
+                    sql += " AND ts >= ?"
+                    args.append(since)
+                n, last = self._conn.execute(sql, args).fetchone()
+                out[kind] = {"count": n, "last_seen": last}
+            out["animal"]["classes"] = [r[0] for r in self._conn.execute(
+                "SELECT DISTINCT class_name FROM detections WHERE kind='animal' ORDER BY class_name")]
+            r = self._conn.execute(
+                "SELECT class_name, ts FROM detections WHERE kind='animal' ORDER BY ts DESC, id DESC LIMIT 1").fetchone()
+            out["latest_animal"] = {"class": r[0], "ts": r[1]} if r else None
+            return out

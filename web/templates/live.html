@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Live / Upload</h1>
+<div id="alert" class="alert" hidden></div>
+<div class="cards">
+  <div class="card stat"><span class="label">Animals logged (all time)</span><span class="big" id="c-animals">–</span></div>
+  <div class="card stat"><span class="label">People logged (not animals)</span><span class="big" id="c-people">–</span></div>
+  <div class="card stat"><span class="label">Last animal seen</span><span class="big small" id="c-last">–</span></div>
+</div>
 
 <section class="card">
   <h2>1. Upload a video or image</h2>

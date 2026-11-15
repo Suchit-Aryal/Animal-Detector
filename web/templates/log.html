@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Detection log</h1>
+<p class="chips">
+  {% for c in classes %}<a class="chip {{ 'on' if c == cls }}" href="?kind={{ kind }}&class={{ c | urlencode }}&source={{ source | urlencode }}&since={{ since | urlencode }}&until={{ until | urlencode }}">{{ c }}</a>{% endfor %}
+  <a class="chip" href="?kind={{ kind }}&source={{ source | urlencode }}&since={{ since | urlencode }}&until={{ until | urlencode }}">any class</a>
+  <a class="chip csv" href="/log.csv?{{ base_qs }}">Export CSV</a>
+</p>
 <form method="get" class="filters">
   <label>Kind
     <select name="kind">

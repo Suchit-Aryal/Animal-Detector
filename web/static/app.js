@@ -42,3 +42,39 @@
   }
   tick();
 })();
+
+// Live page: counters and an alert banner for new animal detections (polls /api/summary every 5 s).
+(function () {
+  const alertBox = document.getElementById("alert");
+  const cAnimals = document.getElementById("c-animals");
+  if (!cAnimals) return;
+  const cPeople = document.getElementById("c-people");
+  const cLast = document.getElementById("c-last");
+  let seenTs = null;      // latest animal timestamp we have already reported
+  let first = true;
+  function esc(t) { return String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+  async function tick() {
+    try {
+      const r = await fetch("/api/summary", { cache: "no-store" });
+      if (r.ok) {
+        const s = await r.json();
+        cAnimals.textContent = s.animal.count;
+        cPeople.textContent = s.person.count;
+        cLast.textContent = s.latest_animal ? `${s.latest_animal.class} · ${s.latest_animal.ts}` : "never";
+        const latest = s.latest_animal;
+        if (latest && latest.ts !== seenTs) {
+          // On the first poll, only remember what is already there: no banner for old detections.
+          if (!first) {
+            alertBox.hidden = false;
+            alertBox.innerHTML = `<strong>Animal detected:</strong> ${esc(latest.class)} at ${esc(latest.ts)} ` +
+              `<a href="/log?kind=animal">open log</a>`;
+          }
+          seenTs = latest.ts;
+        }
+        first = false;
+      }
+    } catch (e) { /* server busy or restarting: try again */ }
+    setTimeout(tick, 5000);
+  }
+  tick();
+})();

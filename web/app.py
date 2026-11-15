@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode
 
+import csv
+import io
 from flask import (Flask, Response, abort, jsonify, redirect, render_template, request,
                    send_from_directory, url_for)
 from werkzeug.utils import secure_filename
@@ -213,19 +215,115 @@ def log_page():
                            base_qs=base_qs, errors=errors)
 
 
+PALETTE = ["#4ade80", "#60a5fa", "#fbbf24", "#f472b6", "#a78bfa", "#34d399", "#f87171", "#22d3ee"]
+RANGES = {"1h": 1, "24h": 24, "7d": 24 * 7}
+
+
+def chart_svg(rows: list, hours: int) -> str:
+    """Stacked bar chart of animal detections, drawn on the server as inline SVG (no JavaScript library).
+    Hourly bars for windows up to 48 h, daily bars for longer windows."""
+    now = datetime.now().astimezone()
+    per_day = hours > 48
+    if per_day:
+        keys = [(now - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(hours // 24 - 1, -1, -1)]
+    else:
+        keys = [(now - timedelta(hours=i)).strftime("%Y-%m-%dT%H") for i in range(hours - 1, -1, -1)]
+    classes = sorted({r["class_name"] for r in rows})
+    totals = {k: {c: 0 for c in classes} for k in keys}
+    for r in rows:
+        key = r["hour"][:10] if per_day else r["hour"]
+        if key in totals:
+            totals[key][r["class_name"]] += r["n"]
+    peak = max((sum(v.values()) for v in totals.values()), default=0)
+    if peak == 0:
+        return '<p class="muted">No animal detections in this window.</p>'
+    W, H, pad = 900, 220, 26
+    n = len(keys)
+    bw = (W - pad) / n
+    parts = [f'<div class="chart-wrap"><svg viewBox="0 0 {W} {H + 30}" role="img" '
+             f'aria-label="Animal detections over time" style="min-width:560px;width:100%;height:auto">']
+    for i, k in enumerate(keys):
+        x = pad + i * bw
+        y = H
+        for j, c in enumerate(classes):
+            v = totals[k][c]
+            if not v:
+                continue
+            h = (H - 10) * v / peak
+            y -= h
+            color = PALETTE[classes.index(c) % len(PALETTE)]
+            parts.append(f'<rect x="{x + 2:.1f}" y="{y:.1f}" width="{max(bw - 4, 1):.1f}" height="{h:.1f}" '
+                         f'fill="{color}"><title>{k} {c}: {v}</title></rect>')
+        if i % max(1, n // 8) == 0:
+            label = k[11:] + ":00" if not per_day else k[5:]
+            parts.append(f'<text x="{x + 2:.1f}" y="{H + 18}" font-size="11" fill="currentColor">{label}</text>')
+    parts.append("</svg></div>")
+    legend = " ".join(f'<span class="chip-dot" style="background:{PALETTE[i % len(PALETTE)]}"></span>{c}'
+                      for i, c in enumerate(classes))
+    return "".join(parts) + f'<p class="legend">{legend}</p>'
+
+
 @app.route("/stats")
 def stats_page():
-    hours = int_arg("hours", 24, 1, 24 * 365)
+    rng = request.args.get("range", "24h")
+    if rng not in RANGES:
+        rng = "24h"
+    hours = RANGES[rng]
     since = (datetime.now().astimezone() - timedelta(hours=hours)).isoformat(timespec="seconds")
     animal_hours = db.hourly_counts("animal", since=since)
-    person_hours = db.hourly_counts("person", since=since)
     animal_totals = db.class_totals("animal", since=since)
     animal_last = db.class_totals("animal")          # last seen, all time
     person_totals = db.class_totals("person", since=since)
-    return render_template("stats.html", page="stats", hours=hours,
-                           animal_hours=animal_hours, person_hours=person_hours,
+    summary = db.summary(since=since)
+    return render_template("stats.html", page="stats", rng=rng, ranges=list(RANGES),
+                           hours=hours, animal_hours=animal_hours,
                            animal_totals=animal_totals, animal_last=animal_last,
-                           person_totals=person_totals)
+                           person_totals=person_totals, summary=summary,
+                           chart=chart_svg(animal_hours, hours))
+
+
+@app.route("/gallery")
+def gallery_page():
+    cls = (request.args.get("class") or "").strip() or None
+    since, err_since = date_arg("since")
+    until, err_until = date_arg("until")
+    page = int_arg("page", 1, 1, 100000)
+    per_page = 48
+    tiles = db.gallery(class_name=cls, since=since, until=until, limit=per_page,
+                       offset=(page - 1) * per_page)
+    classes = db.classes_seen("animal")
+    filters = {"class": cls or "", "since": request.args.get("since", "") if since else "",
+               "until": request.args.get("until", "") if until else ""}
+    return render_template("gallery.html", page="gallery", tiles=tiles, classes=classes, cls=cls or "",
+                           since=filters["since"], until=filters["until"], pg=page, per_page=per_page,
+                           base_qs=urlencode(filters), errors=[e for e in (err_since, err_until) if e])
+
+
+@app.route("/log.csv")
+def log_csv():
+    kind = request.args.get("kind", "animal")
+    if kind not in ("animal", "person", "all"):
+        kind = "animal"
+    since, _ = date_arg("since")
+    until, _ = date_arg("until")
+    rows = db.search(kind=None if kind == "all" else kind,
+                     class_name=(request.args.get("class") or "").strip() or None,
+                     source=(request.args.get("source") or "").strip() or None,
+                     since=since, until=until, limit=1000000)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["time", "kind", "class", "confidence", "source", "clip_time_s", "x1", "y1", "x2", "y2", "snapshot"])
+    for r in rows:
+        w.writerow([r["ts"], r["kind"], r["class_name"], f"{r['confidence']:.4f}", r["source"],
+                    "" if r["clip_time"] is None else r["clip_time"], r["x1"], r["y1"], r["x2"], r["y2"],
+                    r["snapshot"] or ""])
+    return Response(buf.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="detections_{kind}.csv"'})
+
+
+@app.route("/api/summary")
+def api_summary():
+    return jsonify(db.summary())
 
 
 if __name__ == "__main__":
