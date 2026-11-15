@@ -28,8 +28,24 @@ never logged as animals.
    appears on the Live page and a row goes to the alerts list on the Animals page. The default is 0,
    which turns alerts off.
 
-6. **Look back**: *Log* (filter by kind, class, source, time), *Gallery* (one tile per snapshot),
-   *Stats* (counts per class and hour). *Export CSV* on the Log page downloads the same rows.
+6. **Look back**: *Log* (filter by kind, class, source, time), *Gallery* (one tile per snapshot; click
+   a picture to open it, use the arrows to step through), *Events* (repeated detections of one class
+   merged into one event), *Stats* (counts per class and hour, an hour-of-day heatmap). *Export CSV*
+   on the Log page downloads the rows; *Export report* on Stats makes a printable page (use the
+   browser's print dialog to save it as PDF).
+
+7. **Draw zones**: on the Live page, pick *Rectangle* or *Polygon*, click on a running camera feed,
+   name the zone and save. An alert fires when an animal enters the zone (see the limits below).
+
+8. **Try it without real data**: *Load demo data* (Live or Settings) fills the pages with an invented
+   week of detections. They are labelled as demo and kept apart from real rows; *Clear demo data*
+   removes them.
+
+9. **Change settings**: the *Settings* page has all thresholds, a confidence per class (blank = the
+   default), how long a class is not logged twice, and *Reset to config.json values*.
+
+The Theme button switches light and dark (it remembers your choice). The *Sound* and *desktop
+notification* boxes on the Live page make alerts louder.
 
 ## How it works and its limits
 
@@ -47,6 +63,9 @@ never logged as animals.
 - Missing alerts are raised only for cameras that are running. Stopping a camera does not raise
   alerts. Each gap alerts once; the same track can alert again after it is seen and goes missing
   again.
+- Zones apply to every camera. Entry alerts use the box centre, and a tracked animal alerts once per
+  entry. An animal without a track ID alerts at most once a minute per zone. Uploads raise no zone alerts.
+- Event grouping uses a time gap on the log, not the tracker, so it cannot join two tracks.
 - Animal boxes that overlap a person are dropped (see the thresholds on the Live page), so people
   are not logged as animals.
 
@@ -79,6 +98,6 @@ changes are saved to `web/instance/settings.json` and win over `config.json` at 
 
 ## Tests
 
-    ~/.conda/envs/animal-det/bin/python -m unittest web/test_rules.py web/test_tracks.py
+    ~/.conda/envs/animal-det/bin/python -m unittest web/test_rules.py web/test_tracks.py web/test_features.py
 
-Neither test needs the model or Flask. See `web/QA.md` for the browser tests.
+`test_features.py` covers events, zones, demo data and the alert migration. None of the tests needs the model or Flask. See `web/QA.md` for the browser tests.

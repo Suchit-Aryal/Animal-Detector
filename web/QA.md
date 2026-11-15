@@ -143,3 +143,34 @@ Limits found in testing:
 - Half of the animal boxes on the mixed clip have no track ID (the first frame of each track). They are logged, but cannot trigger a missing alert on their own.
 - Upload status uses the clip end as "now". With the default 30 s window, a clip shorter than 30 s always shows "present".
 - Missing alerts are judged on wall time for cameras; a camera that stops reading frames keeps its last status.
+
+## Phase 5 (web-W5): features from web_research.md and polish
+
+Built, in order of value for effort:
+
+| Feature | Where | Checked how |
+|---|---|---|
+| Design pass: logo in the header, one colour set (tokens), theme button (light/dark, saved in the browser, set before the page paints) | `base.html`, `static/style.css`, `static/logo.svg`, `static/app.js` | Browser: toggle to light, reload, stays light; computed background dark `rgb(12,17,24)` when dark. |
+| Snapshot lightbox with prev/next, keys (arrows, Esc), counter | Gallery and Events tiles (`a.lb-link`) | Browser: 48 tiles; opens at 1/48; next shows 2/48; close works. Events page: opens 1/18. |
+| Live FPS and count overlay on the camera feed | `detector.py` `CameraWorker._stamp` | Frame saved from the stream and viewed: "4.6 fps · animals 1 people 0", track label "cow #2 0.84". |
+| Sound and desktop alert options (remembered) | Live page, `static/app.js` | Options save and reload. Sound is a short beep (Web Audio). Desktop notification needs the browser permission; not granted in the test, so not seen working. |
+| Stats: activity by hour of day (bars) and heatmap hour x class | `app.py` `hod_svg`, `heatmap_svg`, `stats.html` | Browser: 3 charts; heatmap 129 cells. |
+| Printable report | `/report?range=`, `report.html`, print CSS | Browser: 3 cards, 6 snapshot tiles. "Print / save as PDF" uses the browser print dialog (not run). |
+| Demo mode: invented week of detections, labelled "demo", clearable; real rows kept apart | `db.py` `load_demo`, `clear_demo`; Live and Settings buttons | Browser: demo note shown, 386 animals (real + demo), Animals 130 rows. Clear: 386 -> 110 (real rows kept). Test: loading twice does not double rows. |
+| Event grouping: same class in the same source, merged when no more than N s apart (N in the page, default 30) | `events.py`, `/events` | Browser: 16 event tiles. Unit tests: gap, class/source split, best snapshot, tracks, wall-clock cameras. |
+| Clip timeline on the job page: one mark per animal per half second; click seeks the video | `detector.py` markers, `job.html`, `static/app.js` | Browser: 10 marks on the leave clip; click sets the video time. |
+| Settings page: all thresholds, per-class confidence table (blank = default), dedupe seconds, reset to config.json, sample-data buttons | `/settings`, `templates/settings.html` | Browser: per-class 0.6 and dedupe 12 saved, shown after reload, `settings.json` written. Server rejects 1.5 ("must be between 0 and 1"). Reset removes `settings.json`. |
+| Zones: draw a rectangle (2 clicks) or polygon (click corners, Close) on a camera feed, name it, save; delete from the list | Live page zone card, `/zones`, `zones` table | Browser: rectangle saved (4 corners). Test camera with zone "Road" (whole frame) and zone "Corner" (top-left 5%): "Road" 13 entry alerts; "Corner" 0. Banner shows "Zone entry: cow #17 entered zone 'Browser test'". |
+
+Zone alert rules: a tracked animal alerts once each time its box centre enters the zone (leaving and re-entering alerts again). An untracked animal (no track ID yet) alerts at most once a minute per zone. Uploads never raise zone alerts. Zones apply to every camera, not one camera.
+
+Tests: `web/test_features.py` (30 tests in total with `test_tracks.py` and `test_rules.py`, all pass).
+
+Not done, or limited:
+- Zones are the same for every camera (no per-camera zones); rectangles are drawn with two clicks, not by dragging.
+- Event grouping works on the detection log by time gap; it does not merge tracks across gaps.
+- Timeline is per clip (on the job page), not one timeline across all clips.
+- "Hourly activity" is hour-of-day bars over the chosen window, not a time series; the existing "Animals over time" chart is unchanged.
+- Screenshots: the md-browser screenshot timed out again and headless Chrome is not installed here, so no page images were saved. Checks were DOM checks, computed colours and one saved frame.
+- The dark theme colours were checked through computed styles, not by eye. Phone widths were not re-checked in this phase.
+- Desktop notifications were not tested with a granted permission.
