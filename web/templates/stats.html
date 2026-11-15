@@ -6,6 +6,7 @@
     {% for r in ranges %}<a href="?range={{ r }}" class="{{ 'on' if r == rng }}">{{ r }}</a>{% endfor %}
   </div>
   <span class="muted">Window: last {{ hours }} h</span>
+  <a class="btn ghost no-print" href="{{ url_for('report_page', range=rng) }}">Export report</a>
 </div>
 
 <div class="cards">
@@ -19,6 +20,18 @@
 <section class="card">
   <h2>Animals over time</h2>
   {{ chart | safe }}
+</section>
+
+<section class="card">
+  <h2>Activity by hour of day</h2>
+  <p class="muted">Local time, all classes, over this window.</p>
+  {{ hod | safe }}
+</section>
+
+<section class="card">
+  <h2>Heatmap: hour of day by class</h2>
+  <p class="muted">Darker = more detections in that hour.</p>
+  {{ heat | safe }}
 </section>
 
 <section class="card">

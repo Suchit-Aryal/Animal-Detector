@@ -329,6 +329,55 @@ def chart_svg(rows: list, hours: int) -> str:
     return "".join(parts) + f'<p class="legend">{legend}</p>'
 
 
+def heatmap_svg(rows: list, classes: list) -> str:
+    """Hour of day (columns) by class (rows), drawn as inline SVG. Darker cell = more detections."""
+    if not rows or not classes:
+        return '<p class="muted">No animal detections in this window.</p>'
+    grid = {(r["class_name"], r["hod"]): r["n"] for r in rows}
+    peak = max(grid.values())
+    cell, left, top = 26, 84, 22
+    W, H = left + 24 * cell + 6, top + len(classes) * cell + 20
+    parts = [f'<div class="chart-wrap"><svg viewBox="0 0 {W} {H}" role="img" aria-label="Detections by hour of day and class" '
+             f'style="min-width:560px;width:100%;height:auto">']
+    for h in range(24):
+        if h % 3 == 0:
+            parts.append(f'<text x="{left + h * cell + 2}" y="{top - 6}" font-size="11">{h:02d}</text>')
+    for j, c in enumerate(classes):
+        y = top + j * cell
+        parts.append(f'<text x="4" y="{y + cell * 0.65}" font-size="12" fill="currentColor">{c}</text>')
+        for h in range(24):
+            n = grid.get((c, h), 0)
+            a = 0.08 + 0.92 * n / peak if n else 0.0
+            fill = f'rgba(91,157,255,{a:.2f})' if n else "transparent"
+            parts.append(f'<rect x="{left + h * cell + 1}" y="{y + 1}" width="{cell - 2}" height="{cell - 2}" rx="4" '
+                         f'fill="{fill}" stroke="var(--line)"><title>{c} at {h:02d}:00: {n}</title></rect>')
+    parts.append("</svg></div>")
+    return "".join(parts)
+
+
+def hod_svg(rows: list) -> str:
+    """Detections per hour of day, all classes, as bars (inline SVG)."""
+    totals = [0] * 24
+    for r in rows:
+        totals[r["hod"]] += r["n"]
+    peak = max(totals)
+    if peak == 0:
+        return '<p class="muted">No animal detections in this window.</p>'
+    W, H, pad = 900, 180, 26
+    bw = (W - pad) / 24
+    parts = [f'<div class="chart-wrap"><svg viewBox="0 0 {W} {H + 26}" role="img" aria-label="Detections by hour of day" '
+             f'style="min-width:560px;width:100%;height:auto">']
+    for h, v in enumerate(totals):
+        bh = (H - 10) * v / peak
+        x = pad + h * bw
+        parts.append(f'<rect x="{x + 2:.1f}" y="{H - bh:.1f}" width="{max(bw - 4, 1):.1f}" height="{bh:.1f}" rx="3" '
+                     f'fill="#2dd4bf"><title>{h:02d}:00: {v}</title></rect>')
+        if h % 3 == 0:
+            parts.append(f'<text x="{x + 2:.1f}" y="{H + 18}" font-size="11">{h:02d}:00</text>')
+    parts.append("</svg></div>")
+    return "".join(parts)
+
+
 @app.route("/stats")
 def stats_page():
     rng = request.args.get("range", "24h")
@@ -341,11 +390,34 @@ def stats_page():
     animal_last = db.class_totals("animal")          # last seen, all time
     person_totals = db.class_totals("person", since=since)
     summary = db.summary(since=since)
+    hod_rows = db.hour_of_day_counts("animal", since=since)
+    heat_classes = sorted({r["class_name"] for r in hod_rows})
     return render_template("stats.html", page="stats", rng=rng, ranges=list(RANGES),
+                           heat=heatmap_svg(hod_rows, heat_classes), hod=hod_svg(hod_rows),
                            hours=hours, animal_hours=animal_hours,
                            animal_totals=animal_totals, animal_last=animal_last,
                            person_totals=person_totals, summary=summary,
                            chart=chart_svg(animal_hours, hours))
+
+
+@app.route("/report")
+def report_page():
+    """A printable one-page summary for the chosen window. 'Print / save as PDF' uses the browser."""
+    rng = request.args.get("range", "24h")
+    if rng not in RANGES:
+        rng = "24h"
+    hours = RANGES[rng]
+    since = (datetime.now().astimezone() - timedelta(hours=hours)).isoformat(timespec="seconds")
+    animal_hours = db.hourly_counts("animal", since=since)
+    totals = db.class_totals("animal", since=since)
+    person_totals = db.class_totals("person", since=since)
+    tiles = db.gallery(since=since, limit=6)
+    alerts = db.alerts_list(10)
+    return render_template("report.html", page="report", rng=rng, hours=hours,
+                           generated=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M"),
+                           totals=totals, person_total=sum(r["n"] for r in person_totals),
+                           animal_total=sum(r["n"] for r in totals), latest=db.summary(since=since)["latest_animal"],
+                           chart=chart_svg(animal_hours, hours), tiles=tiles, alerts=alerts)
 
 
 @app.route("/gallery")

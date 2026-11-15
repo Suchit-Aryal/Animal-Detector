@@ -217,6 +217,18 @@ class DetectionDB:
         with self._lock:
             return [dict(r) for r in self._conn.execute(sql, args).fetchall()]
 
+    def hour_of_day_counts(self, kind: str = "animal", since=None) -> list:
+        """Rows of (hod, class_name, n): when of the day detections happen (0-23, local time)."""
+        sql = ("SELECT CAST(substr(ts,12,2) AS INTEGER) AS hod, class_name, COUNT(*) AS n "
+               "FROM detections WHERE kind = ?")
+        args = [kind]
+        if since:
+            sql += " AND ts >= ?"
+            args.append(since)
+        sql += " GROUP BY hod, class_name"
+        with self._lock:
+            return [dict(r) for r in self._conn.execute(sql, args).fetchall()]
+
     def class_totals(self, kind: str, since=None) -> list:
         sql = "SELECT class_name, COUNT(*) AS n, MAX(ts) AS last_seen FROM detections WHERE kind = ?"
         args = [kind]

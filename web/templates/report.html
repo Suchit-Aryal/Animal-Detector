@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="toolbar no-print">
+  <h1 style="margin:0">Report</h1>
+  <div class="seg">
+    {% for r in ['1h', '24h', '7d'] %}<a href="?range={{ r }}" class="{{ 'on' if r == rng }}">{{ r }}</a>{% endfor %}
+  </div>
+  <button type="button" data-print>Print / save as PDF</button>
+</div>
+<article class="card report">
+  <h2 style="font-size:20px">Animal surveillance report</h2>
+  <p class="muted">Window: last {{ hours }} h · generated {{ generated }} (local time)</p>
+  <div class="cards">
+    <div class="card stat"><span class="label">Animal detections</span><span class="big">{{ animal_total }}</span></div>
+    <div class="card stat"><span class="label">People (not animals)</span><span class="big">{{ person_total }}</span></div>
+    <div class="card stat"><span class="label">Last animal seen</span>
+      <span class="big small">{{ latest.class ~ ' · ' ~ latest.ts if latest else 'none in this window' }}</span></div>
+  </div>
+  <h2>Animals per class</h2>
+  <table>
+    <thead><tr><th>Class</th><th>Detections</th><th>Last seen</th></tr></thead>
+    <tbody>
+    {% for r in totals %}<tr><td>{{ r.class_name }}</td><td>{{ r.n }}</td><td>{{ r.last_seen }}</td></tr>
+    {% else %}<tr><td colspan="3" class="muted">No animal detections in this window.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <h2 style="margin-top:14px">Detections over time</h2>
+  {{ chart | safe }}
+  <h2 style="margin-top:14px">Recent alerts</h2>
+  <table>
+    <thead><tr><th>Raised</th><th>Message</th></tr></thead>
+    <tbody>
+    {% for a in alerts %}<tr><td>{{ a.ts }}</td><td>{{ a.message }}</td></tr>
+    {% else %}<tr><td colspan="2" class="muted">No alerts.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <h2 style="margin-top:14px">Latest snapshots</h2>
+  <div class="gallery">
+    {% for t in tiles %}
+    <figure class="tile">
+      <img src="{{ url_for('snapshots', name=t.snapshot) }}" alt="{{ t.classes }} snapshot">
+      <figcaption><span class="tag">{{ t.classes }}</span> <span class="muted">{{ t.ts }}</span></figcaption>
+    </figure>
+    {% else %}<p class="muted">No snapshots in this window.</p>{% endfor %}
+  </div>
+  <p class="muted" style="margin-top:14px">People are counted separately and never logged as animals.</p>
+</article>
+{% endblock %}

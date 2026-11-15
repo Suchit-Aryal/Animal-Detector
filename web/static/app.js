@@ -184,3 +184,6 @@
     save();
   });
 })();
+
+// Print buttons (report page).
+document.querySelectorAll("[data-print]").forEach((b) => b.addEventListener("click", () => window.print()));
