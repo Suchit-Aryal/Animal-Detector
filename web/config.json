@@ -15,5 +15,7 @@
   "port": 5055,
   "animal_conf_per_class": {},
   "suppress_containment": 0.7,
-  "person_override_conf": 0.8
+  "person_override_conf": 0.8,
+  "presence_seconds": 30,
+  "missing_alert_minutes": 0
 }

@@ -1,7 +1,13 @@
-"""SQLite detection log.
+"""SQLite detection log, track table and alerts.
 
-One row per logged detection. kind is 'animal' or 'person'. People are stored
+detections: one row per logged detection. kind is 'animal' or 'person'. People are stored
 with kind='person' so they are counted separately and never appear as animals.
+track_id is the tracker's ID for an animal (NULL for people). IDs are per source session
+(one camera start or one upload), not true re-identification.
+
+tracks: one row per (source, track_id) with first/last time seen. Used for the Animals page
+and the missing-animal alert. sources: last time each source produced a frame, which is the
+reference clock for "present" versus "missing". alerts: missing-animal alerts.
 """
 
 import sqlite3
@@ -22,7 +28,47 @@ CREATE TABLE IF NOT EXISTS detections (
 );
 CREATE INDEX IF NOT EXISTS idx_det_ts ON detections(ts);
 CREATE INDEX IF NOT EXISTS idx_det_class ON detections(kind, class_name, ts);
+CREATE TABLE IF NOT EXISTS sources (
+    source_id   TEXT PRIMARY KEY,
+    label       TEXT NOT NULL,
+    is_camera   INTEGER NOT NULL DEFAULT 0,
+    last_clock  REAL NOT NULL,          -- source clock of the last frame (clip seconds or epoch)
+    last_ts     TEXT NOT NULL           -- wall time of the last frame
+);
+CREATE TABLE IF NOT EXISTS tracks (
+    source_id   TEXT NOT NULL,
+    track_id    INTEGER NOT NULL,
+    class_name  TEXT NOT NULL,
+    source_label TEXT NOT NULL,
+    is_camera   INTEGER NOT NULL DEFAULT 0,
+    first_clock REAL NOT NULL,
+    last_clock  REAL NOT NULL,
+    first_ts    TEXT NOT NULL,
+    last_ts     TEXT NOT NULL,
+    frames      INTEGER NOT NULL DEFAULT 1,
+    snapshot    TEXT,
+    alerted     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (source_id, track_id)
+);
+CREATE TABLE IF NOT EXISTS alerts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TEXT NOT NULL,
+    source_id   TEXT NOT NULL,
+    track_id    INTEGER NOT NULL,
+    class_name  TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    last_seen   TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    snapshot    TEXT
+);
 """
+
+DET_COLUMNS = ("ts, kind, class_name, confidence, source, clip_time, x1, y1, x2, y2, snapshot, track_id")
+
+
+def status_of(ref_clock: float, last_clock: float, presence_s: float) -> str:
+    """'present' if the track was seen within presence_s of the source's latest frame, else 'missing'."""
+    return "present" if ref_clock - last_clock <= presence_s else "missing"
 
 
 class DetectionDB:
@@ -33,14 +79,95 @@ class DetectionDB:
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns that older databases do not have. Existing rows are kept."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(detections)")}
+        if "track_id" not in cols:
+            with self._conn:
+                self._conn.execute("ALTER TABLE detections ADD COLUMN track_id INTEGER")
 
     def insert_many(self, rows: list) -> None:
         if not rows:
             return
-        sql = ("INSERT INTO detections (ts, kind, class_name, confidence, source, clip_time, "
-               "x1, y1, x2, y2, snapshot) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+        sql = f"INSERT INTO detections ({DET_COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
         with self._lock, self._conn:
             self._conn.executemany(sql, rows)
+
+    def record_frame(self, source_id: str, label: str, is_camera: bool, clock: float, ts: str,
+                     det_rows: list, track_rows: list) -> int:
+        """One transaction per processed frame: detections, track upserts and the source clock.
+        track_rows: dicts with source_id, track_id, class_name, is_camera, clock, ts, snapshot
+        (snapshot only for a track's first logged frame; kept after that)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO sources (source_id, label, is_camera, last_clock, last_ts) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(source_id) DO UPDATE SET label=excluded.label, last_clock=excluded.last_clock, "
+                "last_ts=excluded.last_ts",
+                (source_id, label, int(is_camera), clock, ts))
+            if det_rows:
+                self._conn.executemany(
+                    f"INSERT INTO detections ({DET_COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", det_rows)
+            for t in track_rows:
+                self._conn.execute(
+                    "INSERT INTO tracks (source_id, track_id, class_name, source_label, is_camera, first_clock, "
+                    "last_clock, first_ts, last_ts, frames, snapshot) VALUES (?,?,?,?,?,?,?,?,?,1,?) "
+                    "ON CONFLICT(source_id, track_id) DO UPDATE SET last_clock=excluded.last_clock, "
+                    "last_ts=excluded.last_ts, frames=tracks.frames+1, alerted=0, "
+                    "snapshot=COALESCE(tracks.snapshot, excluded.snapshot)",
+                    (t["source_id"], t["track_id"], t["class_name"], label, int(is_camera),
+                     t["clock"], t["clock"], t["ts"], t["ts"], t.get("snapshot")))
+        return len(det_rows)
+
+    def tracks_list(self, presence_s: float, status: str = "all", limit: int = 300) -> list:
+        """Tracks newest first, each with its status. The reference clock is the source's last frame."""
+        sql = ("SELECT t.*, s.last_clock AS ref_clock FROM tracks t JOIN sources s USING (source_id) "
+               "ORDER BY s.last_ts DESC, t.last_clock DESC LIMIT ?")
+        with self._lock:
+            rows = [dict(r) for r in self._conn.execute(sql, (limit * 3,)).fetchall()]
+        out = []
+        for r in rows:
+            r["status"] = status_of(r["ref_clock"], r["last_clock"], presence_s)
+            if status in ("present", "missing") and r["status"] != status:
+                continue
+            out.append(r)
+            if len(out) >= limit:
+                break
+        return out
+
+    def raise_missing_alerts(self, cutoff: float, running_sources: list, message_fmt: str, now_iso: str) -> list:
+        """Alert once per track of a running camera that has not been seen since cutoff (epoch seconds).
+        Returns the alerts written. Sets alerted=1 so the same gap does not alert twice."""
+        if not running_sources:
+            return []
+        marks = ",".join("?" for _ in running_sources)
+        with self._lock, self._conn:
+            rows = [dict(r) for r in self._conn.execute(
+                f"SELECT * FROM tracks WHERE is_camera = 1 AND alerted = 0 AND last_clock <= ? "
+                f"AND source_id IN ({marks})", (cutoff, *running_sources)).fetchall()]
+            out = []
+            for r in rows:
+                msg = message_fmt.format(cls=r["class_name"], tid=r["track_id"], src=r["source_label"])
+                self._conn.execute(
+                    "INSERT INTO alerts (ts, source_id, track_id, class_name, source, last_seen, message, snapshot) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (now_iso, r["source_id"], r["track_id"], r["class_name"], r["source_label"],
+                     r["last_ts"], msg, r["snapshot"]))
+                self._conn.execute("UPDATE tracks SET alerted = 1 WHERE source_id=? AND track_id=?",
+                                   (r["source_id"], r["track_id"]))
+                out.append({"class": r["class_name"], "track_id": r["track_id"], "message": msg})
+            return out
+
+    def alerts_list(self, limit: int = 50) -> list:
+        with self._lock:
+            return [dict(r) for r in self._conn.execute(
+                "SELECT * FROM alerts ORDER BY id DESC LIMIT ?", (limit,)).fetchall()]
+
+    def latest_alert(self):
+        with self._lock:
+            r = self._conn.execute("SELECT id, ts, message FROM alerts ORDER BY id DESC LIMIT 1").fetchone()
+            return dict(r) if r else None
 
     @staticmethod
     def _where(kind=None, class_name=None, source=None, since=None, until=None):

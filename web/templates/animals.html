@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Animals</h1>
+<p class="muted">One row per tracked animal: from its first to its last sighting. Track IDs restart with each camera start and each upload, so one animal can get a new ID if it leaves and comes back. This is not identification of a specific animal.</p>
+<p class="chips">
+  <a class="chip {{ 'on' if status == 'all' }}" href="?status=all">all ({{ n_all }})</a>
+  <a class="chip {{ 'on' if status == 'present' }}" href="?status=present">present ({{ n_present }})</a>
+  <a class="chip {{ 'on' if status == 'missing' }}" href="?status=missing">missing ({{ n_missing }})</a>
+</p>
+<p class="muted">Present = seen within the last {{ presence|int }} s of the source's latest frame (change it on the Live page).
+{% if minutes > 0 %}An alert is raised when a tracked animal on a running camera has not been seen for {{ '%g'|format(minutes) }} min.{% else %}Missing alerts are off (set minutes on the Live page).{% endif %}</p>
+<table>
+  <thead><tr><th>Status</th><th>Class</th><th>Track</th><th>Source</th><th>First seen</th><th>Last seen</th><th>Duration</th><th>Snapshot</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td><span class="pill {{ 'ok' if r.status == 'present' else 'bad' }}">{{ r.status }}</span></td>
+      <td>{{ r.class_name }}</td>
+      <td>#{{ r.track_id }}</td>
+      <td>{{ r.source_label }}</td>
+      <td>{{ r.first_show }}</td>
+      <td>{{ r.last_show }}</td>
+      <td>{{ r.dur_show }}</td>
+      <td>{% if r.snapshot %}<a href="{{ url_for('snapshots', name=r.snapshot) }}">view</a>{% endif %}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="muted">No animals tracked yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Missing-animal alerts</h2>
+<table>
+  <thead><tr><th>Raised</th><th>Message</th><th>Last seen</th><th>Snapshot</th></tr></thead>
+  <tbody>
+  {% for a in alerts %}
+    <tr>
+      <td>{{ a.ts }}</td>
+      <td>{{ a.message }}</td>
+      <td>{{ a.last_seen }}</td>
+      <td>{% if a.snapshot %}<a href="{{ url_for('snapshots', name=a.snapshot) }}">view</a>{% endif %}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4" class="muted">No alerts.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

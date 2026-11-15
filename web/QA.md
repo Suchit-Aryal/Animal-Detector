@@ -100,3 +100,46 @@ Notes:
 Rule checks: `web/test_rules.py` (6 tests, all pass): centre inside, IoU rule (checked on and off), containment, cow beside a person kept, and small edge touch kept.
 
 Dark theme (visual): the browser tool's dark-scheme setting did not change the screenshot (the page reported dark mode but the screenshot timed out). Visual check done instead on a temporary copy of the Stats page with the dark palette forced on (the real stylesheet with its dark rule enabled). It renders with dark cards, readable text and chart labels.
+
+## Phase 4 (web-W4): tracking, Animals page, missing-animal alert
+
+What was built:
+- Track IDs per animal (ByteTrack via Ultralytics `model.track`, `persist=True`). Each camera start and each upload has its own tracker. Stored in `detections.track_id` (the table was upgraded in place; old rows kept, `track_id` NULL).
+- Tables `tracks` (first/last sighting, frames, snapshot), `sources` (last frame clock per source), `alerts`.
+- `/animals` page: status (present or missing), class, track, source, first/last seen, duration, snapshot; filter all/present/missing; alert list.
+- Missing-animal alert: raised once per gap for a tracked animal on a running camera, when not seen for `missing_alert_minutes` (default 0 = off). Shown as a banner on Live and a row on Animals.
+- Settings on the Live page: `presence_seconds` (default 30) and `missing_alert_minutes`.
+
+Test clip `leave.mp4` (scratchpad `leave/`): 6 s of cow photos from `cows_only.mp4`, then 8 s of a plain grey frame (the animal leaves). Test stream: the same clip looped by ffmpeg over HTTP at 127.0.0.1:8099, used as an IP camera.
+
+Browser checks (md-browser, localhost only):
+
+| Check | Result |
+|---|---|
+| Upload `leave.mp4` on Live, Animals page | 5 cow tracks listed with clip times (e.g. "5.2 s into clip"). |
+| Settings saved: presence 3 s, alert 0.5 min | "Saved", values kept after reload. |
+| Upload status after the clip (3 s window) | all 5 "missing": the cows left the frame before the clip ended. |
+| IP camera (loop stream) for about 90 s, alerts 0.5 min | Animals page: 30 tracks, 29 missing, 1 present; alert rows such as "cow #20 not seen for 0.5 min (camera:http://127.0.0.1:8099/)". |
+| Live banner | "Missing animal: cow #29 not seen for 0.5 min ... open Animals" shown on the Live page. |
+| Stop camera | Page shows "No camera running". No new alerts after the stop (rule tested in `test_tracks.py`). |
+| Server log | No tracebacks. |
+
+Re-run after the final code (curl, same settings): 30 alerts, the latest "cow #8 not seen for 0.5 min", no errors. Screenshots: the md-browser screenshot timed out again (CDP `Page.captureScreenshot`), so no image of the Animals page was saved. The page was checked through the page text instead.
+
+Unit tests: `web/test_tracks.py` (migration of an old database, status rule, upsert keeps the first snapshot, alert once per gap, no alert for stopped cameras or uploads, a track seen again can alert again, new track logged once then dedupe, person rows have no track) and `web/test_rules.py`. 15 tests, all pass.
+
+Detection regression (mixed.mp4, every 5th frame, 16 samples, same weights and thresholds):
+
+| Run | Animal boxes | With a track ID | Without |
+|---|---|---|---|
+| Plain detection (before tracking) | 10 | – | – |
+| Tracker output only (first version) | 7 | – | – |
+| Final: plain detection + tracker IDs | 10 | 5 | 5 |
+
+The first version used only the tracker output. ByteTrack reports a new track only from its second processed frame, and it dropped boxes at the start of each track, so 3 of 10 animal boxes were lost. The final version keeps every plain detection and copies the track ID onto a box when the tracker has a box with IoU above 0.5. The cost is a second run of the animal model per processed frame (about 0.37 s per sample pair on this CPU, measured on the mixed clip).
+
+Limits found in testing:
+- The test clip is a slideshow of photos, not motion, so track numbers change every few seconds (up to 30 in 90 s). Real video should give fewer, longer tracks; not measured yet.
+- Half of the animal boxes on the mixed clip have no track ID (the first frame of each track). They are logged, but cannot trigger a missing alert on their own.
+- Upload status uses the clip end as "now". With the default 30 s window, a clip shorter than 30 s always shows "present".
+- Missing alerts are judged on wall time for cameras; a camera that stops reading frames keeps its last status.

@@ -38,7 +38,7 @@ app.config["MAX_CONTENT_LENGTH"] = CFG["max_upload_mb"] * 1024 * 1024
 
 SETTINGS_FILE = INSTANCE / "settings.json"
 TUNABLE = {"animal_conf", "person_conf", "person_override_conf", "suppress_animal_iou",
-           "suppress_containment", "animal_conf_per_class"}
+           "suppress_containment", "animal_conf_per_class", "presence_seconds", "missing_alert_minutes"}
 if SETTINGS_FILE.exists():  # thresholds saved from the Live page survive a restart
     try:
         CFG.update({k: v for k, v in json.loads(SETTINGS_FILE.read_text()).items() if k in TUNABLE})
@@ -80,6 +80,27 @@ def date_arg(name: str):
     return raw.replace(" ", "T"), None
 
 
+def alert_loop():
+    """Every 5 s: raise a missing-animal alert for each tracked animal on a running camera that has
+    not been seen for missing_alert_minutes. Off when that setting is 0."""
+    while True:
+        time.sleep(5)
+        try:
+            minutes = float(CFG.get("missing_alert_minutes") or 0)
+            if minutes <= 0:
+                continue
+            running = [c.source_id for c in list(CAMERAS.values()) if c.running]
+            fmt = "{cls} #{tid} not seen for " + f"{minutes:g}" + " min ({src})"
+            now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
+            db.raise_missing_alerts(time.time() - minutes * 60, running, fmt, now_iso)
+        except Exception:
+            app.logger.exception("missing-animal check failed")
+
+
+def fmt_clock(source_is_camera: bool, clock: float, ts: str) -> str:
+    return ts[11:19] if source_is_camera else f"{clock:.1f} s into clip"
+
+
 def run_job(job: dict, path: Path, label: str):
     job["status"] = "running"
     try:
@@ -113,6 +134,27 @@ def live():
                            settings_saved=request.args.get("settings_saved"),
                            cfg=CFG,
                            per_text=", ".join(f"{k}={v:g}" for k, v in (CFG.get("animal_conf_per_class") or {}).items()))
+
+
+@app.route("/animals")
+def animals_page():
+    status = request.args.get("status", "all")
+    if status not in ("all", "present", "missing"):
+        status = "all"
+    presence = float(CFG["presence_seconds"])
+    everything = db.tracks_list(presence, "all", limit=300)
+    n_present = sum(1 for r in everything if r["status"] == "present")
+    rows = [r for r in everything if status == "all" or r["status"] == status]
+    for r in rows:
+        r["first_show"] = fmt_clock(bool(r["is_camera"]), r["first_clock"], r["first_ts"])
+        r["last_show"] = fmt_clock(bool(r["is_camera"]), r["last_clock"], r["last_ts"])
+        d = max(0.0, r["last_clock"] - r["first_clock"])
+        r["dur_show"] = f"{int(d // 60)}:{int(d % 60):02d}"
+    return render_template("animals.html", page="animals", rows=rows, status=status,
+                           n_all=len(everything), n_present=n_present,
+                           n_missing=len(everything) - n_present, presence=presence,
+                           minutes=float(CFG.get("missing_alert_minutes") or 0),
+                           alerts=db.alerts_list(30))
 
 
 @app.route("/upload", methods=["POST"])
@@ -352,6 +394,9 @@ def settings_save():
             "person_override_conf": _unit("Keep-anyway confidence", request.form.get("person_override_conf", "")),
             "suppress_animal_iou": _unit("Overlap IoU", request.form.get("suppress_animal_iou", "")),
             "suppress_containment": _unit("Containment", request.form.get("suppress_containment", "")),
+            "presence_seconds": _unit("Present window (seconds)", request.form.get("presence_seconds", ""), 1, 3600),
+            "missing_alert_minutes": _unit("Missing alert (minutes, 0 = off)",
+                                           request.form.get("missing_alert_minutes", ""), 0, 1440),
         }
         per = {}
         for part in (request.form.get("animal_conf_per_class") or "").split(","):
@@ -372,11 +417,14 @@ def settings_save():
 
 @app.route("/api/summary")
 def api_summary():
-    return jsonify(db.summary())
+    data = db.summary()
+    data["alert"] = db.latest_alert()
+    return jsonify(data)
 
 
 if __name__ == "__main__":
     host = CFG.get("host", "127.0.0.1")
     if host != "127.0.0.1":
         raise SystemExit("refusing to bind anything but 127.0.0.1")
+    threading.Thread(target=alert_loop, daemon=True).start()
     app.run(host=host, port=CFG["port"], threaded=True, debug=False)

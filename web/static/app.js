@@ -51,6 +51,7 @@
   const cPeople = document.getElementById("c-people");
   const cLast = document.getElementById("c-last");
   let seenTs = null;      // latest animal timestamp we have already reported
+  let seenAlert = null;   // latest missing-animal alert id we have already reported
   let first = true;
   function esc(t) { return String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
   async function tick() {
@@ -62,9 +63,21 @@
         cPeople.textContent = s.person.count;
         cLast.textContent = s.latest_animal ? `${s.latest_animal.class} · ${s.latest_animal.ts}` : "never";
         const latest = s.latest_animal;
+        const alert = s.alert;
+        let newAlert = false;
+        if (alert && alert.id !== seenAlert) {
+          // A missing-animal alert takes the banner. On the first poll, old alerts are not shown.
+          if (!first) {
+            newAlert = true;
+            alertBox.hidden = false;
+            alertBox.innerHTML = `<strong>Missing animal:</strong> ${esc(alert.message)} at ${esc(alert.ts)} ` +
+              `<a href="/animals?status=missing">open Animals</a>`;
+          }
+          seenAlert = alert.id;
+        }
         if (latest && latest.ts !== seenTs) {
           // On the first poll, only remember what is already there: no banner for old detections.
-          if (!first) {
+          if (!first && !newAlert) {
             alertBox.hidden = false;
             alertBox.innerHTML = `<strong>Animal detected:</strong> ${esc(latest.class)} at ${esc(latest.ts)} ` +
               `<a href="/log?kind=animal">open log</a>`;

@@ -4,19 +4,24 @@ Rules
 - People come from the COCO model (class 'person' only). They are drawn and counted
   separately and are logged with kind='person', never as animals.
 - An animal box whose IoU with ANY person box is above config suppress_animal_iou is dropped.
-- Each (source, kind, class) is logged at most once per dedupe_seconds. For uploads the
-  clock is the clip time; for live cameras it is wall-clock time.
+- Animals get a track ID from ByteTrack (ultralytics model.track). Each source (one camera
+  start or one upload) has its own tracker, so IDs restart in every session.
+- Each (source, kind, class) is logged at most once per dedupe_seconds, and every new track
+  is logged once when it first appears. For uploads the clock is the clip time; for live
+  cameras it is wall-clock time.
 """
 
 import json
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
+
+TRACKER = "bytetrack.yaml"  # ships with ultralytics
 
 import cv2
 from ultralytics import YOLO
@@ -58,6 +63,7 @@ class Det:
     name: str
     conf: float
     box: tuple         # x1, y1, x2, y2 in pixels
+    track_id: Optional[int] = None  # animals only, when tracked
 
 
 class Detector:
@@ -70,9 +76,15 @@ class Detector:
         self.person_id = next((int(i) for i, n in self.person_model.names.items() if str(n) == "person"), 0)
         self.animal_weights = resolve(cfg["animal_weights"])
 
-    def detect(self, frame) -> tuple:
+    def new_tracker(self):
+        """A separate copy of the animal model for one source (camera or upload). Its ByteTrack
+        state is kept inside it, so tracks from different sources never mix."""
+        return YOLO(self.animal_weights)
+
+    def detect(self, frame, tracker=None) -> tuple:
         """Return (animals, persons, suppressed_count) for one BGR frame.
 
+        tracker: a model from new_tracker(); when given, animals get track_id values.
         Animal boxes are dropped when a person is found and the animal box
         (a) has its centre inside a person box, or
         (b) overlaps a person box with IoU above suppress_animal_iou, or
@@ -85,7 +97,15 @@ class Detector:
         floor = min([float(c["animal_conf"])] + [float(v) for v in per.values()])
         kw = dict(imgsz=c["imgsz"], device=c["device"], verbose=False)
         with self.lock:
-            ra = self.animal_model.predict(frame, conf=floor, **kw)[0]
+            ra = self.animal_model.predict(frame, conf=floor, **kw)[0]  # every plain detection is kept
+            tracked = []
+            if tracker is not None:
+                # ByteTrack only reports a new track from its second frame, so boxes it drops are
+                # taken from the plain run above and get track_id None (see README limits).
+                rt = tracker.track(frame, conf=floor, persist=True, tracker=TRACKER, **kw)[0]
+                if rt.boxes is not None and rt.boxes.id is not None:
+                    tracked = [(tuple(float(v) for v in b), int(t))
+                               for b, t in zip(rt.boxes.xyxy.tolist(), rt.boxes.id.int().tolist())]
             rp = self.person_model.predict(frame, conf=float(c["person_conf"]), classes=[self.person_id], **kw)[0]
         persons = [Det("person", "person", float(cf), tuple(float(v) for v in b))
                    for cf, b in zip(rp.boxes.conf.tolist(), rp.boxes.xyxy.tolist())] if rp.boxes is not None else []
@@ -94,6 +114,7 @@ class Detector:
         if ra.boxes is not None:
             raw = zip(ra.boxes.cls.int().tolist(), ra.boxes.conf.tolist(), ra.boxes.xyxy.tolist())
         for cls, cf, b in raw:
+            tid = _track_for(tuple(float(v) for v in b), tracked)
             name = self.animal_names.get(cls, str(cls))
             if cf < float(per.get(name, c["animal_conf"])):
                 continue  # below this class's threshold: not a detection at all
@@ -103,8 +124,18 @@ class Detector:
                     and person_overlap(box, persons, c["suppress_animal_iou"], c["suppress_containment"])):
                 suppressed += 1
                 continue
-            animals.append(Det("animal", name, float(cf), box))
+            animals.append(Det("animal", name, float(cf), box, None if tid is None else int(tid)))
         return animals, persons, suppressed
+
+
+def _track_for(box, tracked, min_iou: float = 0.5):
+    """The track ID of the tracked box that best matches this plain box, or None."""
+    best, best_iou = None, min_iou
+    for tbox, tid in tracked:
+        v = iou(box, tbox)
+        if v > best_iou:
+            best, best_iou = tid, v
+    return best
 
 
 def person_overlap(box, persons, iou_thr: float, contain_thr: float) -> bool:
@@ -133,7 +164,11 @@ def annotate(frame, dets: list):
         x1, y1, x2, y2 = (int(v) for v in d.box)
         color = (0, 200, 0) if d.kind == "animal" else (0, 140, 255)
         cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
-        label = f"{d.name} {d.conf:.2f}" if d.kind == "animal" else f"person {d.conf:.2f}"
+        if d.kind == "animal":
+            tag = f" #{d.track_id}" if d.track_id is not None else ""
+            label = f"{d.name}{tag} {d.conf:.2f}"
+        else:
+            label = f"person {d.conf:.2f}"
         cv2.putText(out, label, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
     return out
 
@@ -146,30 +181,40 @@ class EventLogger:
         self.snap_dir = snapshot_dir
         self.snap_dir.mkdir(parents=True, exist_ok=True)
         self.dedupe = dedupe_seconds
-        self.last = {}  # (source_id, kind, name) -> last logged clock value
+        self.last = {}          # (source_id, kind, name) -> last logged clock value
+        self.known_tracks = set()  # (source_id, track_id) already logged once
         self._lock = threading.Lock()
 
     def log(self, source_id: str, source_label: str, clock: float, dets: list, annotated_frame,
-            clip_time=None, ts_wall=None) -> int:
-        """clock: seconds used for de-duplication (clip time or time.time()). Returns rows written."""
+            clip_time=None, ts_wall=None, is_camera=False) -> int:
+        """clock: seconds used for de-duplication and tracking (clip time or time.time()).
+        Every call updates the source clock and the tracks; rows are written only when due:
+        a new track, or a class not logged within dedupe_seconds. Returns rows written."""
+        ts = (ts_wall or datetime.now().astimezone()).isoformat(timespec="seconds")
         with self._lock:
-            due = []
+            due, new_tracks = [], set()
             for d in dets:
                 key = (source_id, d.kind, d.name)
                 prev = self.last.get(key)
-                if prev is None or clock - prev >= self.dedupe:
+                is_new = d.track_id is not None and (source_id, d.track_id) not in self.known_tracks
+                if is_new or prev is None or clock - prev >= self.dedupe:
                     self.last[key] = clock
                     due.append(d)
-        if not due:
-            return 0
-        stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
-        snap = f"{stamp}_{source_id}.jpg".replace("/", "_")
-        cv2.imwrite(str(self.snap_dir / snap), annotated_frame)
-        ts = (ts_wall or datetime.now().astimezone()).isoformat(timespec="seconds")
-        rows = [(ts, d.kind, d.name, d.conf, source_label, clip_time,
-                 d.box[0], d.box[1], d.box[2], d.box[3], snap) for d in due]
-        self.db.insert_many(rows)
-        return len(rows)
+                if is_new:
+                    new_tracks.add((source_id, d.track_id))
+                    self.known_tracks.add((source_id, d.track_id))
+        snap = None
+        if due:
+            stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
+            snap = f"{stamp}_{source_id}.jpg".replace("/", "_")
+            cv2.imwrite(str(self.snap_dir / snap), annotated_frame)
+        det_rows = [(ts, d.kind, d.name, d.conf, source_label, clip_time,
+                     d.box[0], d.box[1], d.box[2], d.box[3], snap, d.track_id) for d in due]
+        track_rows = [{"source_id": source_id, "track_id": d.track_id, "class_name": d.name,
+                       "clock": clock, "ts": ts,
+                       "snapshot": snap if (source_id, d.track_id) in new_tracks else None}
+                      for d in dets if d.track_id is not None]
+        return self.db.record_frame(source_id, source_label, is_camera, clock, ts, det_rows, track_rows)
 
 
 def process_media(path: Path, label: str, job: dict, detector: Detector, logger: EventLogger,
@@ -186,7 +231,7 @@ def process_media(path: Path, label: str, job: dict, detector: Detector, logger:
         ann = annotate(frame, animals + persons)
         out = out_dir / f"{job_id}_annotated.jpg"
         cv2.imwrite(str(out), ann)
-        n = logger.log(source_id, f"upload:{label}", 0.0, animals + persons, ann, clip_time=None)
+        n = logger.log(source_id, f"upload:{label}", 0.0, animals + persons, ann, clip_time=None)  # no tracks on a still
         job["outputs"].append({"kind": "image", "url": out.name})
         job["counts"] = {"animal": len(animals), "person": len(persons), "suppressed": sup, "rows_logged": n}
         job["progress"] = 100
@@ -204,6 +249,7 @@ def process_media(path: Path, label: str, job: dict, detector: Detector, logger:
     idx = 0
     last_dets = []
     counts = {"animal": 0, "person": 0, "suppressed": 0, "rows_logged": 0}
+    tracker = detector.new_tracker()  # this clip's own track IDs
     try:
         while True:
             ok, frame = cap.read()
@@ -211,7 +257,7 @@ def process_media(path: Path, label: str, job: dict, detector: Detector, logger:
                 break
             t = idx / fps
             if idx % skip == 0:
-                animals, persons, sup = detector.detect(frame)
+                animals, persons, sup = detector.detect(frame, tracker)
                 last_dets = animals + persons
                 counts["suppressed"] += sup
                 ann = annotate(frame, last_dets)
@@ -261,6 +307,7 @@ class CameraWorker:
         self.running = False
         self.started = time.time()
         self.counts = {"animal": 0, "person": 0, "rows_logged": 0}
+        self.source_id = f"camera-{cam_id}"
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -281,6 +328,7 @@ class CameraWorker:
             self.running = False
             return
         idx, last = 0, []
+        tracker = self.detector.new_tracker()  # this camera session's own track IDs
         try:
             while not self._stop.is_set():
                 ok, frame = cap.read()
@@ -288,13 +336,13 @@ class CameraWorker:
                     self.error = "camera read failed"
                     break
                 if idx % self.skip == 0:
-                    animals, persons, _ = self.detector.detect(frame)
+                    animals, persons, _ = self.detector.detect(frame, tracker)
                     last = animals + persons
                     ann = annotate(frame, last)
                     self.counts["animal"] += len(animals)
                     self.counts["person"] += len(persons)
                     self.counts["rows_logged"] += self.logger.log(
-                        f"camera-{self.cam_id}", f"camera:{self.source}", time.time(), last, ann)
+                        self.source_id, f"camera:{self.source}", time.time(), last, ann, is_camera=True)
                 else:
                     ann = annotate(frame, last)
                 ok2, jpg = cv2.imencode(".jpg", ann, [cv2.IMWRITE_JPEG_QUALITY, 80])
