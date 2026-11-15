@@ -77,3 +77,13 @@ Counts per split (boxes per class; images in brackets):
 | test_extra (new) | 4 | 108 | 70 | 0 | 116 | 80 |
 
 Total boxes 6,150 across train/val/test/test_extra. Dog has no test_extra data and no test sheep: sheep is evaluated only on test_extra (116 boxes). `validate_dataset.py --root data/dataset` PASSED. No source is in two splits (group check in the merge script).
+
+## Variant: no whole-frame Mendeley images (data-A5, 15 Nov 2026)
+
+- Config: `data/dataset/data_nowf.yaml`. Same val, test and test_extra as v2. Train points to `data/dataset/train_nowf.txt`.
+- Rule: a train image from a Mendeley source (`mendeley5__`, `mendeley_yolo__`) is dropped whole if any of its boxes covers at least 98% of the frame in both width and height. Whole images are dropped, never just the box, so an unlabeled animal does not become background.
+- Built by `src/data/make_nowf_list.py` (run it to regenerate the list; `--dry-run` prints counts only).
+- Result: 661 of 2,993 train images dropped (572 mendeley5, 89 mendeley_yolo). 2,332 train images remain.
+- Train boxes per class, v2 → no-whole-frame: dog 337 → 331, goat 1109 → 981, cow 1808 → 1669, cat 467 → 386, sheep 1066 → 751.
+- 17 whole-frame boxes remain in the variant (15 from openimages_yolo, 2 from openimages_goat_sheep). The rule covers Mendeley only, so they are kept.
+- `validate_dataset.py` on `data/dataset`: PASSED.
