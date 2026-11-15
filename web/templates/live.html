@@ -8,6 +8,12 @@
   <div class="card stat"><span class="label">Last animal seen</span><span class="big small" id="c-last">–</span></div>
 </div>
 
+<div class="row notify no-print">
+  <span class="muted">Alerts:</span>
+  <label><input type="checkbox" id="opt-sound"> sound</label>
+  <label><input type="checkbox" id="opt-desktop"> desktop notification</label>
+</div>
+
 <section class="card">
   <h2>1. Upload a video or image</h2>
   <form method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data">

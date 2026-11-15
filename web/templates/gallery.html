@@ -19,7 +19,7 @@
 <div class="gallery">
   {% for t in tiles %}
     <figure class="tile">
-      <a href="{{ url_for('snapshots', name=t.snapshot) }}" target="_blank" rel="noopener">
+      <a class="lb-link" data-group="gallery" data-cap="{{ t.classes }} · {{ t.ts }}" href="{{ url_for('snapshots', name=t.snapshot) }}">
         <img src="{{ url_for('snapshots', name=t.snapshot) }}" alt="{{ t.classes }} snapshot" loading="lazy">
       </a>
       <figcaption><span class="tag">{{ t.classes }}</span><br><span class="muted">{{ t.ts }}</span><br><span class="muted">{{ t.source }}</span></figcaption>

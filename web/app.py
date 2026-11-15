@@ -136,6 +136,16 @@ def live():
                            per_text=", ".join(f"{k}={v:g}" for k, v in (CFG.get("animal_conf_per_class") or {}).items()))
 
 
+@app.route("/events")
+def events_page():
+    return redirect(url_for("log_page"))  # replaced in the events batch
+
+
+@app.route("/settings")
+def settings_page():
+    return redirect(url_for("live"))  # replaced in the settings batch
+
+
 @app.route("/animals")
 def animals_page():
     status = request.args.get("status", "all")
@@ -419,6 +429,8 @@ def settings_save():
 def api_summary():
     data = db.summary()
     data["alert"] = db.latest_alert()
+    if data["alert"]:
+        data["alert"]["title"] = "Missing animal"
     return jsonify(data)
 
 

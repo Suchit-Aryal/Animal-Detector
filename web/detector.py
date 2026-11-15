@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -308,8 +309,24 @@ class CameraWorker:
         self.started = time.time()
         self.counts = {"animal": 0, "person": 0, "rows_logged": 0}
         self.source_id = f"camera-{cam_id}"
+        self._frame_times = deque(maxlen=30)  # times of recent processed frames, for the FPS overlay
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def fps(self) -> float:
+        t = list(self._frame_times)
+        if len(t) < 2 or t[-1] - t[0] <= 0:
+            return 0.0
+        return (len(t) - 1) / (t[-1] - t[0])
+
+    def _stamp(self, img, n_animal: int, n_person: int):
+        """Overlay in the corner: processing speed and what the last processed frame had."""
+        text = f"{self.fps():.1f} fps  |  animals {n_animal}  people {n_person}"
+        (w, h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+        out = img.copy()
+        cv2.rectangle(out, (0, 0), (w + 16, h + 14), (20, 24, 32), -1)
+        cv2.putText(out, text, (8, h + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (235, 240, 250), 2)
+        return out
 
     def start(self):
         self.running = True
@@ -328,6 +345,7 @@ class CameraWorker:
             self.running = False
             return
         idx, last = 0, []
+        n_animal = n_person = 0
         tracker = self.detector.new_tracker()  # this camera session's own track IDs
         try:
             while not self._stop.is_set():
@@ -338,6 +356,8 @@ class CameraWorker:
                 if idx % self.skip == 0:
                     animals, persons, _ = self.detector.detect(frame, tracker)
                     last = animals + persons
+                    n_animal, n_person = len(animals), len(persons)
+                    self._frame_times.append(time.time())
                     ann = annotate(frame, last)
                     self.counts["animal"] += len(animals)
                     self.counts["person"] += len(persons)
@@ -345,6 +365,7 @@ class CameraWorker:
                         self.source_id, f"camera:{self.source}", time.time(), last, ann, is_camera=True)
                 else:
                     ann = annotate(frame, last)
+                ann = self._stamp(ann, n_animal, n_person)
                 ok2, jpg = cv2.imencode(".jpg", ann, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if ok2:
                     self.latest = jpg.tobytes()
