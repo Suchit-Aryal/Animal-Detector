@@ -26,3 +26,25 @@ Only public data goes to train/val. Never test. Licence and image counts are fil
 | masterdrawup_stray-cat | https://universe.roboflow.com/masterdrawup/stray-cat | check page | - | BLOCKED | Classes: dog + straycat: read names before mapping |
 
 Already on disk (not Roboflow): `data/raw/openimages_yolo` (Open Images V7, 798 images), `data/raw/mendeley` (street animals, no boxes), `data/raw/mendeley_yolo` (empty).
+
+## Interim dataset (built 15 Nov 2026, data/dataset/)
+
+**The interim test set is NOT Nepal data.** It is 80 held-out Open Images frames with real human-drawn boxes. It only shows the pipeline works. The honest Nepal test set is still to be made from our own labelled photos.
+
+| Source | Used for | Images | Labels | Notes |
+|---|---|---|---|---|
+| openimages_yolo (Open Images V7, Dog/Goat/Cattle/Cat) | train 70% / val 20% / test 10% by image | 798 | real human boxes | Split by image (each image is its own group) |
+| mendeley_yolo (Mendeley street animals, folders as class) | TRAIN ONLY | 689 (after 2 rejects) | MODEL-GENERATED boxes (yolov8m-oiv7 detector) | Never in val or test |
+
+Mendeley boxes come from a pretrained detector, not people. They are for training only.
+Spot-check: 30 Mendeley images viewed (contact sheet); 2 rejected (`src/data/mendeley_rejects.txt`): mdy_cow_00017 (box on a tower), mdy_cat_00113 (no visible box).
+
+Final counts (boxes per class, from data/dataset/labels/):
+
+| Split | images | dog | goat | cow | cat | sheep |
+|---|---|---|---|---|---|---|
+| train | 1247 | 332 | 313 | 1083 | 467 | 19 |
+| val | 160 | 51 | 90 | 128 | 55 | 0 |
+| test | 80 | 33 | 22 | 41 | 22 | 0 |
+
+Known gaps: sheep has only 19 boxes (all train, none in val or test). Mendeley goat (20 images) and sheep (16 images) were far below the ~300 target: the detector found few goats or sheep in those folders.

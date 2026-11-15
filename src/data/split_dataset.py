@@ -85,12 +85,16 @@ def write_yaml(out: Path, data_path: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--src", action="append", required=True, type=Path,
-                        help="YOLO source folder with images/ and labels/ (repeat for several)")
+    parser.add_argument("--src", action="append", default=[], type=Path,
+                        help="YOLO source folder split 70/20/10 (repeat for several)")
+    parser.add_argument("--train-only-src", action="append", default=[], type=Path,
+                        help="YOLO source that goes ONLY into train (e.g. model-labelled data); never val/test")
     parser.add_argument("--out", default="data/dataset", type=Path)
     parser.add_argument("--ratios", default="70,20,10", help="train,val,test percentages")
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--clean", action="store_true", help="delete the existing output images/labels first")
+    parser.add_argument("--exclude-file", type=Path, default=None,
+                        help="text file: one image stem per line to leave out (spot-check rejects)")
     args = parser.parse_args()
 
     try:
@@ -109,19 +113,30 @@ def main() -> int:
         shutil.rmtree(out / "images", ignore_errors=True)
         shutil.rmtree(out / "labels", ignore_errors=True)
 
+    excluded = set()
+    if args.exclude_file:
+        excluded = {ln.strip() for ln in args.exclude_file.read_text().splitlines() if ln.strip() and not ln.startswith("#")}
+        print(f"excluding {len(excluded)} image(s) listed in {args.exclude_file}")
     items = []
-    for src in args.src:
-        found = collect(src)
-        print(f"source {src}: {len(found)} images")
-        items.extend((src, *it) for it in found)
-    if not items:
+    train_only_items = []
+    for src in args.src + args.train_only_src:
+        found = [f for f in collect(src) if f[0].stem not in excluded]
+        tag = "train-only" if src in args.train_only_src else "split 70/20/10"
+        print(f"source {src} ({tag}): {len(found)} images")
+        target = train_only_items if src in args.train_only_src else items
+        target.extend((src, *it) for it in found)
+    if not items and not train_only_items:
         print("ERROR: no images found in the source folders", file=sys.stderr)
         return 2
 
     groups: dict = defaultdict(list)
     for item in items:
         groups[item[2]].append(item)
-    assignment = assign_splits(groups, ratios, args.seed)
+    assignment = assign_splits(groups, ratios, args.seed) if groups else {}
+    # train-only sources: every image goes to train, each image is its own group
+    for item in train_only_items:
+        groups[item[2]].append(item)
+        assignment[item[2]] = "train"
 
     manifest = []
     missing_labels = 0
