@@ -11,7 +11,7 @@
 - Settings in `web/config.json`: animal confidence 0.5, person confidence 0.25.
 
 ## Slide 3: Why this approach (60 s)
-- Transfer learning: start from COCO-pretrained Ultralytics YOLO weights, adapt to our classes. Small model = fast training (11.1M parameters for yolov8s, 78 FPS on an RTX 4050 laptop GPU).
+- Transfer learning: start from COCO-pretrained Ultralytics YOLO weights, adapt to our classes. Small model = fast training (11.1M parameters for yolov8s, about 80-100 FPS (measured 78 and 98 on two runs) on an RTX 4050 laptop GPU).
 - Experiments (one change per run, picked by validation mAP50, never by test): yolov8n 50 ep, yolov8s 80 ep, yolov8m 80 ep, yolov8s 80 ep with `freeze=10` (first 10 layers frozen).
 - Figure: `results/figures/loss_curves.png`.
 

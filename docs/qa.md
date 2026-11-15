@@ -1,7 +1,7 @@
 # Q&A prep (tailored to our actual results). Numbers: results/comparison.csv, results/experiments.csv.
 
 ## Model and metrics
-- **Why YOLO?** Single-stage, real-time, strong pretrained weights, simple training API. Alternatives: Faster R-CNN (slower), SSD, RT-DETR. Our yolov8s runs at 78 FPS on a laptop GPU.
+- **Why YOLO?** Single-stage, real-time, strong pretrained weights, simple training API. Alternatives: Faster R-CNN (slower), SSD, RT-DETR. Our yolov8s runs at about 80-100 FPS (measured 78 and 98 on two runs) on a laptop GPU.
 - **What is mAP / IoU / precision / recall?** IoU = overlap / union of predicted and true box. AP = area under the precision-recall curve per class; mAP averages classes. mAP50 counts a hit at IoU >= 0.5; mAP50-95 averages thresholds 0.5 to 0.95. Precision = correct detections / all detections; recall = correct detections / all real animals.
 - **What is NMS?** Removes duplicate overlapping boxes, keeping the highest confidence (we use IoU 0.7 in evaluation).
 - **What is transfer learning and freeze=10?** We start from pretrained weights. `freeze=10` keeps the first 10 layers (the generic feature extractor) fixed so only the later layers learn from our small dataset. In our runs it gave the best validation mAP50 (0.792) vs 0.663 without freezing.
@@ -24,7 +24,7 @@
 - **How do you tell people from animals?** A second model (COCO yolov8n, class `person`) runs on each frame. People are shown separately and never logged as animals. An animal box that overlaps a person box (IoU above 0.3, or mostly contained, 0.7) is dropped, unless the animal confidence is very high (override 0.8). This stops a person being logged as a dog or goat.
 - **What thresholds does it use?** Animal confidence 0.5, person confidence 0.25, per-class overrides supported (currently empty). Higher animal confidence = fewer false alarms but more misses. The values are settings, not tuned on a Nepal test set.
 - **What is logged?** SQLite table: time, class, confidence, source (upload or camera), clip time for uploads, snapshot image. Dedupe: each class at most once per 10 s per source, so a standing cow is not logged 300 times. Log page has filters; Stats page shows per class, per hour, last seen, people counted separately.
-- **Live performance?** The website runs on CPU by default (config `device: cpu`) and processes every 3rd live frame and every 5th upload frame to keep CPU use low. We have not measured website FPS; the 78 FPS figure is the model alone on the GPU.
+- **Live performance?** The website runs on CPU by default (config `device: cpu`) and processes every 3rd live frame and every 5th upload frame to keep CPU use low. We have not measured website FPS; the about 80-100 FPS (measured 78 and 98 on two runs) figure is the model alone on the GPU.
 - **Privacy?** Server binds to 127.0.0.1, nothing is sent to external services; people are detected only to be excluded from the animal log. Avoid showing faces or licence plates on slides.
 - **What if two animals overlap or are in a group?** Group scenes are a known weak spot (missed goats in the crowded test image). Dedupe means the log records the class, not exact headcount.
 
