@@ -14,7 +14,7 @@ from ultralytics import YOLO
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = {"model": "yolov8n.pt", "data": "data/dataset/data.yaml", "epochs": 50, "imgsz": 640, "batch": 16,
             "seed": 0, "device": None, "patience": 20, "name": "animal_ft", "project": "runs/detect",
-            "workers": 2, "fraction": 1.0}
+            "workers": 2, "fraction": 1.0, "freeze": 0}
 
 
 def main():
@@ -33,12 +33,12 @@ def main():
     model.train(data=cfg["data"], epochs=int(cfg["epochs"]), imgsz=int(cfg["imgsz"]), batch=int(cfg["batch"]),
                 seed=int(cfg["seed"]), deterministic=True, device=cfg["device"], patience=int(cfg["patience"]),
                 project=cfg["project"], name=cfg["name"], workers=int(cfg["workers"]),
-                fraction=float(cfg["fraction"]), exist_ok=False)
+                fraction=float(cfg["fraction"]), freeze=int(cfg["freeze"]) or None, exist_ok=False)
     best = Path(model.trainer.best)
-    dst = ROOT / "results/weights/best.pt"
+    dst = ROOT / "results/weights" / f"{cfg['name']}.pt"  # one file per run; copy the chosen one to best.pt by hand
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(best, dst)
-    (ROOT / "results/weights/train_config_used.yaml").write_text(yaml.safe_dump(cfg))
+    (ROOT / "results/weights" / f"{cfg['name']}_config.yaml").write_text(yaml.safe_dump(cfg))
     print(f"best.pt copied: {best} -> {dst}")
 
 
