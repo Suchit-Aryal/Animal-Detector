@@ -26,8 +26,9 @@ IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 def split_files(data_yaml, split):
     cfg = yaml.safe_load(Path(data_yaml).read_text())
     base = Path(cfg.get("path", Path(data_yaml).parent))
-    if not base.is_absolute():
-        base = (Path(data_yaml).resolve().parent / base).resolve()
+    if not base.is_absolute():  # try next to the yaml, then the project root, then the cwd
+        cands = [(Path(data_yaml).resolve().parent / base).resolve(), (ROOT / base).resolve(), (Path.cwd() / base).resolve()]
+        base = next((c for c in cands if (c / cfg[split]).exists()), cands[0])
     d = base / cfg[split]
     imgs = sorted(p for p in d.rglob("*") if p.suffix.lower() in IMG_EXT)
     return imgs, cfg
