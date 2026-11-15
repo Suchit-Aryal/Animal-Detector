@@ -3,14 +3,17 @@
   "person_weights": "yolov8n.pt",
   "device": "cpu",
   "imgsz": 640,
-  "animal_conf": 0.35,
-  "person_conf": 0.4,
-  "suppress_animal_iou": 0.6,
+  "animal_conf": 0.5,
+  "person_conf": 0.25,
+  "suppress_animal_iou": 0.3,
   "dedupe_seconds": 10,
   "upload_frame_skip": 5,
   "live_frame_skip": 3,
   "max_upload_mb": 1024,
   "instance_dir": "web/instance",
   "host": "127.0.0.1",
-  "port": 5055
+  "port": 5055,
+  "animal_conf_per_class": {},
+  "suppress_containment": 0.7,
+  "person_override_conf": 0.8
 }

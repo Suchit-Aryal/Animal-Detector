@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 
 import csv
 import io
+import json
 from flask import (Flask, Response, abort, jsonify, redirect, render_template, request,
                    send_from_directory, url_for)
 from werkzeug.utils import secure_filename
@@ -34,6 +35,15 @@ for folder in (UPLOADS, OUTPUTS, SNAPS):
 
 app = Flask(__name__, template_folder=str(WEB / "templates"), static_folder=str(WEB / "static"))
 app.config["MAX_CONTENT_LENGTH"] = CFG["max_upload_mb"] * 1024 * 1024
+
+SETTINGS_FILE = INSTANCE / "settings.json"
+TUNABLE = {"animal_conf", "person_conf", "person_override_conf", "suppress_animal_iou",
+           "suppress_containment", "animal_conf_per_class"}
+if SETTINGS_FILE.exists():  # thresholds saved from the Live page survive a restart
+    try:
+        CFG.update({k: v for k, v in json.loads(SETTINGS_FILE.read_text()).items() if k in TUNABLE})
+    except (ValueError, OSError):
+        pass
 
 db = DetectionDB(INSTANCE / "detections.sqlite")
 detector = Detector(CFG)
@@ -98,7 +108,11 @@ def live():
             for cid, c in CAMERAS.items()]
     return render_template("live.html", page="live", jobs=jobs, cams=cams,
                            max_mb=CFG["max_upload_mb"], error=request.args.get("error"),
-                           cam_error=request.args.get("cam_error"))
+                           cam_error=request.args.get("cam_error"),
+                           settings_error=request.args.get("settings_error"),
+                           settings_saved=request.args.get("settings_saved"),
+                           cfg=CFG,
+                           per_text=", ".join(f"{k}={v:g}" for k, v in (CFG.get("animal_conf_per_class") or {}).items()))
 
 
 @app.route("/upload", methods=["POST"])
@@ -319,6 +333,41 @@ def log_csv():
                     r["snapshot"] or ""])
     return Response(buf.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="detections_{kind}.csv"'})
+
+
+def _unit(name: str, raw: str, lo: float = 0.0, hi: float = 1.0) -> float:
+    v = float(raw)  # ValueError -> caller shows a message
+    if not lo <= v <= hi:
+        raise ValueError(f"{name} must be between {lo:g} and {hi:g}")
+    return v
+
+
+@app.route("/settings", methods=["POST"])
+def settings_save():
+    """Change the detection thresholds while the app runs. Takes effect on the next frame."""
+    try:
+        new = {
+            "animal_conf": _unit("Animal confidence", request.form.get("animal_conf", "")),
+            "person_conf": _unit("Person confidence", request.form.get("person_conf", "")),
+            "person_override_conf": _unit("Keep-anyway confidence", request.form.get("person_override_conf", "")),
+            "suppress_animal_iou": _unit("Overlap IoU", request.form.get("suppress_animal_iou", "")),
+            "suppress_containment": _unit("Containment", request.form.get("suppress_containment", "")),
+        }
+        per = {}
+        for part in (request.form.get("animal_conf_per_class") or "").split(","):
+            if not part.strip():
+                continue
+            name, _, val = part.partition("=")
+            name = name.strip().lower()
+            if not name or not _:
+                raise ValueError("per-class thresholds look like cow=0.6, goat=0.4")
+            per[name] = _unit(f"Threshold for {name}", val.strip())
+        new["animal_conf_per_class"] = per
+    except ValueError as exc:
+        return redirect(url_for("live", settings_error=str(exc)))
+    CFG.update(new)
+    SETTINGS_FILE.write_text(json.dumps({k: CFG[k] for k in TUNABLE}, indent=2))
+    return redirect(url_for("live", settings_saved=1))
 
 
 @app.route("/api/summary")

@@ -71,25 +71,59 @@ class Detector:
         self.animal_weights = resolve(cfg["animal_weights"])
 
     def detect(self, frame) -> tuple:
-        """Return (animals, persons, suppressed_count) for one BGR frame."""
-        kw = dict(imgsz=self.cfg["imgsz"], device=self.cfg["device"], verbose=False)
+        """Return (animals, persons, suppressed_count) for one BGR frame.
+
+        Animal boxes are dropped when a person is found and the animal box
+        (a) has its centre inside a person box, or
+        (b) overlaps a person box with IoU above suppress_animal_iou, or
+        (c) has more than suppress_containment of its area inside a person box.
+        A box with confidence >= person_override_conf is kept even then (a confident
+        cow beside a person is still a cow). Thresholds are read from the config on
+        every call, so the Live page can change them while the app runs."""
+        c = self.cfg
+        per = c.get("animal_conf_per_class") or {}
+        floor = min([float(c["animal_conf"])] + [float(v) for v in per.values()])
+        kw = dict(imgsz=c["imgsz"], device=c["device"], verbose=False)
         with self.lock:
-            ra = self.animal_model.predict(frame, conf=self.cfg["animal_conf"], **kw)[0]
-            rp = self.person_model.predict(frame, conf=self.cfg["person_conf"], classes=[self.person_id], **kw)[0]
-        persons = [Det("person", "person", float(c), tuple(float(v) for v in b))
-                   for c, b in zip(rp.boxes.conf.tolist(), rp.boxes.xyxy.tolist())] if rp.boxes is not None else []
+            ra = self.animal_model.predict(frame, conf=floor, **kw)[0]
+            rp = self.person_model.predict(frame, conf=float(c["person_conf"]), classes=[self.person_id], **kw)[0]
+        persons = [Det("person", "person", float(cf), tuple(float(v) for v in b))
+                   for cf, b in zip(rp.boxes.conf.tolist(), rp.boxes.xyxy.tolist())] if rp.boxes is not None else []
         animals, suppressed = [], 0
-        thr = self.cfg["suppress_animal_iou"]
         raw = []
         if ra.boxes is not None:
             raw = zip(ra.boxes.cls.int().tolist(), ra.boxes.conf.tolist(), ra.boxes.xyxy.tolist())
-        for cls, c, b in raw:
+        for cls, cf, b in raw:
+            name = self.animal_names.get(cls, str(cls))
+            if cf < float(per.get(name, c["animal_conf"])):
+                continue  # below this class's threshold: not a detection at all
             box = tuple(float(v) for v in b)
-            if any(iou(box, p.box) > thr for p in persons):
+            strong = cf >= float(c.get("person_override_conf", 1.1))  # a very confident animal box is kept
+            if (not strong and persons
+                    and person_overlap(box, persons, c["suppress_animal_iou"], c["suppress_containment"])):
                 suppressed += 1
                 continue
-            animals.append(Det("animal", self.animal_names.get(cls, str(cls)), float(c), box))
+            animals.append(Det("animal", name, float(cf), box))
         return animals, persons, suppressed
+
+
+def person_overlap(box, persons, iou_thr: float, contain_thr: float) -> bool:
+    """True if an animal box belongs to a person: centre inside, IoU above iou_thr, or
+    more than contain_thr of the animal box inside a person box."""
+    x1, y1, x2, y2 = box
+    area = max((x2 - x1) * (y2 - y1), 1e-6)
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    for p in persons:
+        px1, py1, px2, py2 = p.box
+        if px1 <= cx <= px2 and py1 <= cy <= py2:
+            return True
+        if iou(box, p.box) > iou_thr:
+            return True
+        iw = max(0.0, min(x2, px2) - max(x1, px1))
+        ih = max(0.0, min(y2, py2) - max(y1, py1))
+        if iw * ih / area > contain_thr:
+            return True
+    return False
 
 
 def annotate(frame, dets: list):

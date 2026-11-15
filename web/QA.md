@@ -67,3 +67,36 @@ Not verified: the dark theme. The headless browser did not apply the dark colour
 ## Findings for god (not web bugs)
 
 - Dark webcam frames: the animal model labels people's faces as "dog" or "cat" (gallery frames from the webcam test). The COCO person model did not detect those faces, so the overlap rule (IoU > 0.6) had nothing to compare against. This is the animal model, not the page. Fix options: a higher animal confidence for low-light scenes, or a person-confidence threshold change.
+
+## Phase 3 (web-W3): dark-frame false alarms, thresholds, Settings
+
+Problem: the dark webcam view produced "dog" and "cat" logs on a person's face.
+
+Changes (all in web/):
+- Animal confidence default raised from 0.35 to 0.5. Per-class override in config (`animal_conf_per_class`, e.g. cow=0.6).
+- Person detector threshold lowered from 0.4 to 0.25.
+- Animal box dropped when a person is found and any of these hold: centre inside a person box; IoU > 0.3 with a person box; more than 70% of the animal box inside a person box.
+- New: a confident animal (confidence >= 0.8, `person_override_conf`) is kept even beside a person. Without this, a real cow at 0.94 next to a person was dropped (found in the mixed clip).
+- Settings section on the Live page: change the thresholds while the app runs; applies to the next frame; saved to `web/instance/settings.json`; validated (0 to 1; per-class format checked).
+
+Important: during this test the animal model file `results/weights/best.pt` was replaced (modified 22:16:15, while testing). Earlier numbers and the new numbers come from different weights. The table below uses a frozen copy of the new weights for both settings.
+
+Test clips: the raw dark webcam clip (15 s, mean brightness 31/255), `people_only.mp4`, `mixed.mp4`, and `cows_only.mp4` (9 real cow photos from the checked Mendeley set, no people). Counts are per sampled frame (every 3rd frame).
+
+| Clip | Old model, old settings (before the swap) | Frozen new weights, OLD settings | Frozen new weights, NEW settings |
+|---|---|---|---|
+| dark webcam | dog 2 (false) | 0 | 0 |
+| people only (mascots, see note) | cow 6 | cow 7 | cow 6 |
+| mixed (cows + people) | goat 7, cow 13 | goat 3, cow 6 (21 suppressed) | goat 3, cow 13 (0 suppressed) |
+| cows only (real cows) | cow 40 | cow 36 | cow 36 |
+
+Notes:
+- The new weights already stop the dark-webcam false alarms. The settings still matter for the rest.
+- People-only "cow" hits are on inflatable cow mascots in the picture (`0032cf08baca880c.jpg`), not real cows. No threshold setting removes these; they are a limit of the model and should be reported as such.
+- Lowering the animal threshold to 0.5 removes some weak real-cow hits (40 to 36 on the cows clip). This is the trade-off god asked for.
+- Live check: with the animal threshold at 0.95, a cow photo gave 0 animal hits; at 0.5 it gave 1. The Settings change took effect on the next upload. A 20-second run of the webcam in the dark room logged no new rows.
+- Settings form checked in the browser: change to 0.6, "Saved." shown, value kept.
+
+Rule checks: `web/test_rules.py` (6 tests, all pass): centre inside, IoU rule (checked on and off), containment, cow beside a person kept, and small edge touch kept.
+
+Dark theme (visual): the browser tool's dark-scheme setting did not change the screenshot (the page reported dark mode but the screenshot timed out). Visual check done instead on a temporary copy of the Stats page with the dark palette forced on (the real stylesheet with its dark rule enabled). It renders with dark cards, readable text and chart labels.

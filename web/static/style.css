@@ -64,3 +64,8 @@ header.top { flex-wrap:wrap; }
 svg text { fill: var(--muted); }
 input[name=source] { width: min(340px, 100%); }
 .chart-wrap { overflow-x:auto; }
+.settings { display:grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap:10px 14px; align-items:end; }
+.settings label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); }
+.settings input { padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); }
+.settings button { justify-self:start; }
+.ok-msg { color:var(--ok); }
