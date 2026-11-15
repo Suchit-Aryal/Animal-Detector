@@ -5,7 +5,7 @@
 - **What is mAP / IoU / precision / recall?** IoU = overlap / union of predicted and true box. AP = area under the precision-recall curve per class; mAP averages classes. mAP50 counts a hit at IoU >= 0.5; mAP50-95 averages thresholds 0.5 to 0.95. Precision = correct detections / all detections; recall = correct detections / all real animals.
 - **What is NMS?** Removes duplicate overlapping boxes, keeping the highest confidence (we use IoU 0.7 in evaluation).
 - **What is transfer learning and freeze=10?** We start from pretrained weights. `freeze=10` keeps the first 10 layers (the generic feature extractor) fixed so only the later layers learn from our small dataset. In our runs it gave the best validation mAP50 (0.792) vs 0.663 without freezing.
-- **Why yolov8s and not the bigger yolov8m?** Chosen by validation mAP50: yolov8m (0.635) was not better than yolov8s (0.663), and is 2.5x slower to train and ~1.4x slower at inference (56 vs 78-99 FPS). Bigger models overfit more on 1247 images.
+- **Why yolov8s and not the bigger yolov8m?** Chosen by validation mAP50: yolov8m (0.635) was not better than yolov8s (0.663), and is 2.3x slower to train (2512 s vs 1094 s) and ~1.4x slower at inference (56 vs 78-99 FPS). Bigger models overfit more on 1247 images.
 - **How did you choose the final model without touching the test set?** By validation mAP50 only. (Note: val mAP and test mAP differ a lot for unfrozen runs because both sets are small.)
 
 ## Honesty about results
