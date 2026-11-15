@@ -8,6 +8,7 @@
     <input type="file" name="media" accept="video/*,image/*" required>
     <button type="submit">Analyse</button>
   </form>
+  {% if error %}<p class="bad">{{ error }}</p>{% endif %}
   <p class="muted">Max {{ max_mb }} MB. Frames are sampled (every few frames), so long clips take a while.</p>
 </section>
 
@@ -17,6 +18,7 @@
     <input type="text" name="source" placeholder="webcam index (0) or IP camera URL" required>
     <button type="submit">Start</button>
   </form>
+  {% if cam_error %}<p class="bad">{{ cam_error }}</p>{% endif %}
   {% for c in cams %}
     <div class="cam">
       <div class="row">

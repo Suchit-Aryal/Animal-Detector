@@ -5,11 +5,13 @@ Run from the project root:
 Then open http://127.0.0.1:5055/
 """
 
+import re
 import threading
 import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlencode
 
 from flask import (Flask, Response, abort, jsonify, redirect, render_template, request,
                    send_from_directory, url_for)
@@ -44,6 +46,28 @@ def allowed(name: str) -> bool:
     return Path(name).suffix.lower() in IMG_EXT | VID_EXT
 
 
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?)?$")
+
+
+def int_arg(name: str, default: int, lo: int, hi: int) -> int:
+    """Read an integer query argument; bad or out-of-range values fall back to the default."""
+    try:
+        v = int(request.args.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    return v if lo <= v <= hi else default
+
+
+def date_arg(name: str):
+    """Return (value, error). value is the date/time prefix with 'T' between date and time."""
+    raw = (request.args.get(name) or "").strip()
+    if not raw:
+        return None, None
+    if not DATE_RE.match(raw):
+        return None, f"'{name}' must look like 2026-11-15 or 2026-11-15T14:30 (got '{raw}'), so it was ignored"
+    return raw.replace(" ", "T"), None
+
+
 def run_job(job: dict, path: Path, label: str):
     job["status"] = "running"
     try:
@@ -59,6 +83,11 @@ def index():
     return redirect(url_for("live"))
 
 
+@app.errorhandler(404)
+def not_found(exc):
+    return render_template("not_found.html", page="", message="That page or job does not exist."), 404
+
+
 @app.route("/live")
 def live():
     with JOBS_LOCK:
@@ -66,16 +95,17 @@ def live():
     cams = [{"id": cid, "source": c.source, "running": c.running, "error": c.error}
             for cid, c in CAMERAS.items()]
     return render_template("live.html", page="live", jobs=jobs, cams=cams,
-                           max_mb=CFG["max_upload_mb"])
+                           max_mb=CFG["max_upload_mb"], error=request.args.get("error"),
+                           cam_error=request.args.get("cam_error"))
 
 
 @app.route("/upload", methods=["POST"])
 def upload():
     f = request.files.get("media")
     if f is None or not f.filename:
-        abort(400, "no file")
+        return redirect(url_for("live", error="Choose a file first."))
     if not allowed(f.filename):
-        abort(400, "unsupported file type")
+        return redirect(url_for("live", error="Unsupported file type. Use a video (mp4, avi, mov, mkv, webm) or an image (jpg, png, bmp, webp)."))
     job_id = uuid.uuid4().hex[:10]
     name = secure_filename(f.filename) or "upload"
     path = UPLOADS / f"{job_id}_{name}"
@@ -118,7 +148,7 @@ def snapshots(name):
 def camera_start():
     source = (request.form.get("source") or "").strip()
     if not source:
-        abort(400, "camera source required (webcam index like 0, or an IP camera URL)")
+        return redirect(url_for("live", cam_error="Enter a webcam index (0, 1, ...) or an IP camera URL."))
     cam_id = uuid.uuid4().hex[:8]
     worker = CameraWorker(cam_id, source, detector, logger, CFG)
     CAMERAS[cam_id] = worker
@@ -156,25 +186,36 @@ def log_page():
     kind = request.args.get("kind", "animal")
     if kind not in ("animal", "person", "all"):
         kind = "animal"
-    cls = request.args.get("class") or None
-    source = request.args.get("source") or None
-    since = request.args.get("since") or None
-    until = request.args.get("until") or None
-    page = max(1, int(request.args.get("page", 1) or 1))
+    cls = (request.args.get("class") or "").strip() or None
+    source = (request.args.get("source") or "").strip() or None
+    since, err_since = date_arg("since")
+    until, err_until = date_arg("until")
+    errors = [e for e in (err_since, err_until) if e]
+    page = int_arg("page", 1, 1, 100000)
     per_page = 100
     kind_arg = None if kind == "all" else kind
     rows = db.search(kind=kind_arg, class_name=cls, source=source, since=since, until=until,
                      limit=per_page, offset=(page - 1) * per_page)
     total = db.count_search(kind=kind_arg, class_name=cls, source=source, since=since, until=until)
-    classes = sorted(set(db.classes_seen("animal")) | set(db.classes_seen("person")))
+    if kind == "animal":
+        classes = db.classes_seen("animal")
+    elif kind == "person":
+        classes = db.classes_seen("person")
+    else:
+        classes = sorted(set(db.classes_seen("animal")) | set(db.classes_seen("person")))
+    filters = {"kind": kind, "class": cls or "", "source": source or "",
+               "since": request.args.get("since", "") if since else "",
+               "until": request.args.get("until", "") if until else ""}
+    base_qs = urlencode(filters)
     return render_template("log.html", page="log", rows=rows, total=total, pg=page,
                            per_page=per_page, kind=kind, cls=cls or "", source=source or "",
-                           since=since or "", until=until or "", classes=classes)
+                           since=filters["since"], until=filters["until"], classes=classes,
+                           base_qs=base_qs, errors=errors)
 
 
 @app.route("/stats")
 def stats_page():
-    hours = int(request.args.get("hours", 24) or 24)
+    hours = int_arg("hours", 24, 1, 24 * 365)
     since = (datetime.now().astimezone() - timedelta(hours=hours)).isoformat(timespec="seconds")
     animal_hours = db.hourly_counts("animal", since=since)
     person_hours = db.hourly_counts("person", since=since)

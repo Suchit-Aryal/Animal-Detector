@@ -12,7 +12,8 @@
     status.textContent = j.status;
     progress.textContent = j.progress;
     if (j.counts) {
-      counts.textContent = `Animal detections (sampled frames): ${j.counts.animal}, people: ${j.counts.person}, ` +
+      const scope = (j.outputs[0] && j.outputs[0].kind === "video") ? "in sampled frames" : "in this image";
+      counts.textContent = `Animal detections ${scope}: ${j.counts.animal}, people: ${j.counts.person}, ` +
         `animal boxes dropped because they overlap a person: ${j.counts.suppressed}, rows logged: ${j.counts.rows_logged}`;
     }
     if (j.error) errorEl.textContent = j.error;

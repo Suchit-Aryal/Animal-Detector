@@ -42,8 +42,11 @@ class DetectionDB:
         with self._lock, self._conn:
             self._conn.executemany(sql, rows)
 
-    def search(self, kind=None, class_name=None, source=None, since=None, until=None,
-               limit=200, offset=0) -> list:
+    @staticmethod
+    def _where(kind=None, class_name=None, source=None, since=None, until=None):
+        """Build the WHERE clause. since/until are prefixes of the local time such as
+        '2026-11-15' or '2026-11-15T14:30', compared on the same number of characters,
+        so a date-only 'until' includes the whole day."""
         where, args = [], []
         if kind in ("animal", "person"):
             where.append("kind = ?")
@@ -55,34 +58,23 @@ class DetectionDB:
             where.append("source LIKE ?")
             args.append(f"%{source}%")
         if since:
-            where.append("ts >= ?")
-            args.append(since)
+            where.append("substr(ts, 1, ?) >= ?")
+            args.extend([len(since), since])
         if until:
-            where.append("ts <= ?")
-            args.append(until)
+            where.append("substr(ts, 1, ?) <= ?")
+            args.extend([len(until), until])
         clause = ("WHERE " + " AND ".join(where)) if where else ""
+        return clause, args
+
+    def search(self, kind=None, class_name=None, source=None, since=None, until=None,
+               limit=200, offset=0) -> list:
+        clause, args = self._where(kind, class_name, source, since, until)
         sql = f"SELECT * FROM detections {clause} ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
         with self._lock:
             return [dict(r) for r in self._conn.execute(sql, (*args, limit, offset)).fetchall()]
 
     def count_search(self, kind=None, class_name=None, source=None, since=None, until=None) -> int:
-        where, args = [], []
-        if kind in ("animal", "person"):
-            where.append("kind = ?")
-            args.append(kind)
-        if class_name:
-            where.append("class_name = ?")
-            args.append(class_name)
-        if source:
-            where.append("source LIKE ?")
-            args.append(f"%{source}%")
-        if since:
-            where.append("ts >= ?")
-            args.append(since)
-        if until:
-            where.append("ts <= ?")
-            args.append(until)
-        clause = ("WHERE " + " AND ".join(where)) if where else ""
+        clause, args = self._where(kind, class_name, source, since, until)
         with self._lock:
             return self._conn.execute(f"SELECT COUNT(*) FROM detections {clause}", args).fetchone()[0]
 

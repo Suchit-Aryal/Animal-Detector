@@ -16,6 +16,7 @@
   <label>To <input type="text" name="until" value="{{ until }}"></label>
   <button type="submit">Filter</button>
 </form>
+{% for e in errors %}<p class="bad">{{ e }}</p>{% endfor %}
 <p class="muted">{{ total }} matching rows. Showing page {{ pg }} ({{ per_page }} per page), newest first.</p>
 <table>
   <thead><tr><th>Time</th><th>Kind</th><th>Class</th><th>Confidence</th><th>Source</th><th>Clip time (s)</th><th>Snapshot</th></tr></thead>
@@ -36,7 +37,7 @@
   </tbody>
 </table>
 <p class="pager">
-  {% if pg > 1 %}<a href="?kind={{ kind }}&class={{ cls }}&source={{ source }}&since={{ since }}&until={{ until }}&page={{ pg - 1 }}">&larr; newer</a>{% endif %}
-  {% if pg * per_page < total %}<a href="?kind={{ kind }}&class={{ cls }}&source={{ source }}&since={{ since }}&until={{ until }}&page={{ pg + 1 }}">older &rarr;</a>{% endif %}
+  {% if pg > 1 %}<a href="?{{ base_qs }}&page={{ pg - 1 }}">&larr; newer</a>{% endif %}
+  {% if pg * per_page < total %}<a href="?{{ base_qs }}&page={{ pg + 1 }}">older &rarr;</a>{% endif %}
 </p>
 {% endblock %}
