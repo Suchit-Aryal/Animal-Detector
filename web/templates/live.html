@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Live / Upload</h1>
+
+<section class="card">
+  <h2>1. Upload a video or image</h2>
+  <form method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data">
+    <input type="file" name="media" accept="video/*,image/*" required>
+    <button type="submit">Analyse</button>
+  </form>
+  <p class="muted">Max {{ max_mb }} MB. Frames are sampled (every few frames), so long clips take a while.</p>
+</section>
+
+<section class="card">
+  <h2>2. Live camera</h2>
+  <form method="post" action="{{ url_for('camera_start') }}">
+    <input type="text" name="source" placeholder="webcam index (0) or IP camera URL" required>
+    <button type="submit">Start</button>
+  </form>
+  {% for c in cams %}
+    <div class="cam">
+      <div class="row">
+        <strong>{{ c.source }}</strong>
+        {% if c.running %}<span class="pill ok">running</span>{% else %}<span class="pill">stopped</span>{% endif %}
+        {% if c.error %}<span class="pill bad">{{ c.error }}</span>{% endif %}
+        <form method="post" action="{{ url_for('camera_stop', cam_id=c.id) }}" class="inline">
+          <button type="submit">Stop</button>
+        </form>
+      </div>
+      {% if c.running %}
+        <img class="feed" src="{{ url_for('camera_stream', cam_id=c.id) }}" alt="live annotated feed">
+      {% endif %}
+    </div>
+  {% else %}
+    <p class="muted">No camera running.</p>
+  {% endfor %}
+</section>
+
+<section class="card">
+  <h2>Recent uploads</h2>
+  {% for j in jobs %}
+    <div class="row"><a href="{{ url_for('job_page', job_id=j.id) }}">{{ j.name }}</a>
+      <span class="pill">{{ j.status }}</span></div>
+  {% else %}
+    <p class="muted">No uploads yet.</p>
+  {% endfor %}
+</section>
+{% endblock %}

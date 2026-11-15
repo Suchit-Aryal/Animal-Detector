@@ -1,0 +1,16 @@
+{
+  "animal_weights": "results/weights/best.pt",
+  "person_weights": "yolov8n.pt",
+  "device": "cpu",
+  "imgsz": 640,
+  "animal_conf": 0.35,
+  "person_conf": 0.4,
+  "suppress_animal_iou": 0.6,
+  "dedupe_seconds": 10,
+  "upload_frame_skip": 5,
+  "live_frame_skip": 3,
+  "max_upload_mb": 1024,
+  "instance_dir": "web/instance",
+  "host": "127.0.0.1",
+  "port": 5055
+}

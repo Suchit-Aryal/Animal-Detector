@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ job.name }}</h1>
+<section class="card" id="job" data-job="{{ job.id }}">
+  <p>Status: <span id="status" class="pill">{{ job.status }}</span>
+     Progress: <span id="progress">{{ job.progress }}</span>%</p>
+  <p id="counts" class="muted"></p>
+  <p id="error" class="bad"></p>
+  <div id="outputs"></div>
+  <p class="muted">Detections are in the <a href="{{ url_for('log_page') }}">Log</a>. People are shown in orange and never logged as animals.</p>
+</section>
+{% endblock %}

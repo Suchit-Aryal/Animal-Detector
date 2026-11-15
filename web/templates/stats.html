@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Stats</h1>
+<form method="get" class="filters">
+  <label>Window (hours) <input type="number" name="hours" min="1" value="{{ hours }}"></label>
+  <button type="submit">Update</button>
+</form>
+
+<section class="card">
+  <h2>Last seen (animals, all time)</h2>
+  <table>
+    <thead><tr><th>Class</th><th>Detections (all time)</th><th>Last seen</th></tr></thead>
+    <tbody>
+    {% for r in animal_last %}<tr><td>{{ r.class_name }}</td><td>{{ r.n }}</td><td>{{ r.last_seen }}</td></tr>
+    {% else %}<tr><td colspan="3" class="muted">No animals logged yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Animals per class in the last {{ hours }} h</h2>
+  {% set mx = (animal_totals | map(attribute='n') | max) if animal_totals else 1 %}
+  {% for r in animal_totals %}
+    <div class="bar-row"><span class="bar-label">{{ r.class_name }}</span>
+      <span class="bar" style="width: {{ (100 * r.n / mx) | round(1) }}%"></span><span>{{ r.n }}</span></div>
+  {% else %}<p class="muted">No animal detections in this window.</p>{% endfor %}
+</section>
+
+<section class="card">
+  <h2>Animals per hour (last {{ hours }} h)</h2>
+  <table>
+    <thead><tr><th>Hour</th><th>Class</th><th>Count</th></tr></thead>
+    <tbody>
+    {% for r in animal_hours %}<tr><td>{{ r.hour }}:00</td><td>{{ r.class_name }}</td><td>{{ r.n }}</td></tr>
+    {% else %}<tr><td colspan="3" class="muted">None.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>People (counted separately, not animals), last {{ hours }} h</h2>
+  <p>{{ person_totals[0].n if person_totals else 0 }} person detections logged.
+     Last seen: {{ person_totals[0].last_seen if person_totals else 'never' }}</p>
+</section>
+{% endblock %}
