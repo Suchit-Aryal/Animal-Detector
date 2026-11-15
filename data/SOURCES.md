@@ -48,3 +48,32 @@ Final counts (boxes per class, from data/dataset/labels/):
 | test | 80 | 33 | 22 | 41 | 22 | 0 |
 
 Known gaps: sheep has only 19 boxes (all train, none in val or test). Mendeley goat (20 images) and sheep (16 images) were far below the ~300 target: the detector found few goats or sheep in those folders.
+
+## Dataset v2 (merged 15 Nov 2026, data/dataset/)
+
+Built by `src/data/merge_v2.py`. Rollback: `data/dataset/backup_v1/` (hard links to the v1 files; v1 manifest and data.yaml are there).
+
+| Source | Licence | Used for | Images | Notes |
+|---|---|---|---|---|
+| Open Images V7, goat/sheep subset (`data/raw/openimages_goat_sheep`) | annotations CC BY 4.0; images CC BY 2.0 (per-image licence in OI metadata) | train 80% / val 20%; 80 images to `test_extra` (40 sheep + 40 goat picks; some overlap) | 503 kept | Human boxes. 21 of the 524 images were already in `openimages_yolo` and are left out (no leak). 114 group-of boxes removed (from the OI annotation file, IsGroupOf=1). |
+| Mendeley "Annotated Object Detection Dataset of Five Herbivorous Animal Classes" (`data/raw/mendeley_herbivores5`, DOI 10.17632/fwm6z9tv3f.1) | CC BY 4.0 | TRAIN ONLY (its valid split goes to val; its test split is not used) | 2,127 kept of 3,062 (after the 600-per-class cap) | Roboflow export, boxes as published (not eyeballed). ONE image per source (augmented copies dropped), dHash dedupe (distance 4), camel images dropped, cap 600 per class. Buffalo mapped to cow. |
+
+Mendeley remap: 0 Buffalo -> 2 cow, 1 Camel -> dropped image, 2 Cow -> 2 cow, 3 Goat -> 1 goat, 4 Sheep -> 4 sheep.
+
+Held-out "extra" split (`test_extra`): only goat and sheep images from Open Images. The original 80-image `test` is unchanged (checked byte for byte against v1). Use `data/dataset/data_extra.yaml` to evaluate on test_extra.
+
+Quality notes (read before trusting numbers):
+- Spot-check: 30 Mendeley images drawn with `data/check_labels.py` and looked at on one contact sheet. 3 rejected (listed in `src/data/mendeley5_rejects.txt`): Goat-640 (one box covers the whole frame), Goat-233 (sheep box on a goat image), Cow-345 (box fits, animal looks like a goat). The sample used for the final build was drawn again after the rejects were set, so the last 30 are not the same 30 that were looked at. Roughly 1 in 10 looked wrong.
+- Whole-frame boxes: 2,761 of 8,598 Mendeley boxes cover at least 98% of the frame in both width and height. Many are close-ups where the animal fills the picture, but some are wrong. Not removed automatically; worth checking before a final model.
+- Mendeley images are mostly farm and natural scenes with one animal each, not streets.
+
+Counts per split (boxes per class; images in brackets):
+
+| Split | dog | goat | cow | cat | sheep | images |
+|---|---|---|---|---|---|---|
+| train | 337 | 1109 | 1808 | 467 | 1066 | 2993 |
+| val | 52 | 300 | 318 | 55 | 222 | 634 |
+| test (frozen, v1) | 33 | 22 | 41 | 22 | 0 | 80 |
+| test_extra (new) | 4 | 108 | 70 | 0 | 116 | 80 |
+
+Total boxes 6,150 across train/val/test/test_extra. Dog has no test_extra data and no test sheep: sheep is evaluated only on test_extra (116 boxes). `validate_dataset.py --root data/dataset` PASSED. No source is in two splits (group check in the merge script).

@@ -12,3 +12,14 @@ Status: no Roboflow source mapped yet (all BLOCKED on download). Each source's c
 | (none yet) | | | |
 
 Open Images (`data/raw/openimages_yolo`), already in our ids: 0 Dog, 1 Goat, 2 Cattle, 3 Cat.
+
+## Dataset v2 mapping (merge_v2.py)
+
+| Source | Source class (id) | Our id | Notes |
+|---|---|---|---|
+| Open Images goat/sheep (`openimages_goat_sheep`) | already our ids (0 dog, 1 goat, 2 cow/Cattle, 3 cat, 4 sheep) | same | Group-of boxes removed. |
+| Mendeley herbivores5 (`mendeley_herbivores5`) | 0 Buffalo | 2 cow | Bovine rule. |
+| | 1 Camel | drop the image | Not one of our classes. |
+| | 2 Cow | 2 cow | |
+| | 3 Goat | 1 goat | |
+| | 4 Sheep | 4 sheep | |

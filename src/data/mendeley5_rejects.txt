@@ -1,0 +1,7 @@
+# Mendeley herbivores5 images rejected by hand after check_labels.py (30-image spot-check, 2026-11-15)
+# Goat-640: one box covering the whole frame (no real box).
+# Goat-233: box labelled sheep in a goat image; animal class unclear.
+# Cow-345: animal looks like a goat; box fits, class unclear.
+Goat-640-_png.rf.56e3bbdda8efcbfb46fb438015e15432.jpg
+Goat-233-_png.rf.52c6f24f3ad0d05bc94a24b02c75543d.jpg
+Cow-345-_png.rf.52b7ba73f3226c138f759bb663e2f857.jpg
