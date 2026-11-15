@@ -54,7 +54,10 @@
         </form>
       </div>
       {% if c.running %}
-        <img class="feed" src="{{ url_for('camera_stream', cam_id=c.id) }}" alt="live annotated feed">
+        <div class="feedwrap">
+          <img class="feed" src="{{ url_for('camera_stream', cam_id=c.id) }}" alt="live annotated feed">
+          <canvas class="zone-canvas" aria-label="zones drawn over the feed"></canvas>
+        </div>
       {% endif %}
     </div>
   {% else %}
@@ -67,6 +70,30 @@
   <p class="muted">Confidence {{ '%.2f'|format(cfg.animal_conf) }} (animals) · person {{ '%.2f'|format(cfg.person_conf) }} ·
      present within {{ '%g'|format(cfg.presence_seconds) }} s · missing alert {{ 'off' if not cfg.missing_alert_minutes else ('after ' ~ '%g'|format(cfg.missing_alert_minutes) ~ ' min') }}.
      <a href="{{ url_for('settings_page') }}">Change them in Settings</a>.</p>
+</section>
+
+<section class="card" id="zones">
+  <h2>Zones: alert when an animal enters</h2>
+  <p class="muted">Draw on a running camera feed. A zone applies to every camera. An alert fires when an animal's box centre goes inside (a tracked animal alerts once per entry).</p>
+  <div class="row">
+    <button type="button" class="ghost" data-mode="rect">Rectangle</button>
+    <button type="button" class="ghost" data-mode="poly">Polygon</button>
+    <button type="button" class="ghost" id="z-finish" hidden>Close polygon</button>
+    <button type="button" class="ghost" id="z-cancel">Cancel</button>
+  </div>
+  <div class="row">
+    <input type="text" id="z-name" maxlength="40" placeholder="Zone name, e.g. Road">
+    <button type="button" id="z-save" disabled>Save zone</button>
+  </div>
+  <p id="z-msg" class="muted">Pick Rectangle or Polygon, then click on a camera feed above.</p>
+  <table>
+    <thead><tr><th>Zone</th><th>Corners</th><th></th></tr></thead>
+    <tbody id="z-list">
+    {% for z in zones %}<tr><td>{{ z.name }}</td><td>{{ z.points | length }}</td>
+      <td><button type="button" class="danger" data-del="{{ z.id }}">Delete</button></td></tr>
+    {% else %}<tr><td colspan="3" class="muted">No zones yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
 </section>
 
 <section class="card">

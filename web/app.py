@@ -49,6 +49,7 @@ if SETTINGS_FILE.exists():  # thresholds saved from the Live page survive a rest
 db = DetectionDB(INSTANCE / "detections.sqlite")
 detector = Detector(CFG)
 logger = EventLogger(db, SNAPS, CFG["dedupe_seconds"])
+logger.zones_fn = db.list_zones
 
 JOBS = {}          # job_id -> dict (in memory; the log itself is in SQLite)
 JOBS_LOCK = threading.Lock()
@@ -131,7 +132,7 @@ def live():
     return render_template("live.html", page="live", jobs=jobs, cams=cams,
                            max_mb=CFG["max_upload_mb"], error=request.args.get("error"),
                            cam_error=request.args.get("cam_error"),
-                           demo_loaded=db.demo_loaded(), empty=(db.summary()["animal"]["count"] == 0
+                           zones=db.list_zones(), demo_loaded=db.demo_loaded(), empty=(db.summary()["animal"]["count"] == 0
                                                                and db.summary()["person"]["count"] == 0),
                            demo_msg=request.args.get("demo"),
                            cfg=CFG,
@@ -442,6 +443,37 @@ def stats_page():
                            chart=chart_svg(animal_hours, hours))
 
 
+@app.route("/api/zones")
+def api_zones():
+    return jsonify(db.list_zones())
+
+
+@app.route("/zones", methods=["POST"])
+def zone_add():
+    """Save a zone drawn on a camera feed. Points are [x, y] in 0..1 of the frame."""
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name") or "").strip()[:40]
+    pts = data.get("points") or []
+    if not name:
+        return jsonify(error="Give the zone a name."), 400
+    if not (3 <= len(pts) <= 50):
+        return jsonify(error="A zone needs 3 to 50 corners."), 400
+    try:
+        clean = [[min(1.0, max(0.0, float(x))), min(1.0, max(0.0, float(y)))] for x, y in pts]
+    except (TypeError, ValueError):
+        return jsonify(error="Corners must be numbers."), 400
+    zid = db.add_zone(name, clean, datetime.now().astimezone().isoformat(timespec="seconds"))
+    return jsonify(id=zid, name=name, points=clean)
+
+
+@app.route("/zones/<int:zone_id>/delete", methods=["POST"])
+def zone_delete(zone_id):
+    db.delete_zone(zone_id)
+    if request.headers.get("Accept", "").startswith("application/json"):
+        return jsonify(ok=True)
+    return redirect(url_for("live"))
+
+
 @app.route("/demo/load", methods=["POST"])
 def demo_load():
     names = [p.name for p in SNAPS.glob("*.jpg")][:200]
@@ -582,7 +614,7 @@ def api_summary():
     data = db.summary()
     data["alert"] = db.latest_alert()
     if data["alert"]:
-        data["alert"]["title"] = "Missing animal"
+        data["alert"]["title"] = "Zone entry" if data["alert"]["kind"] == "zone" else "Missing animal"
     return jsonify(data)
 
 

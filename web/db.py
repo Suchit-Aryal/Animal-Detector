@@ -10,6 +10,7 @@ and the missing-animal alert. sources: last time each source produced a frame, w
 reference clock for "present" versus "missing". alerts: missing-animal alerts.
 """
 
+import json
 import random
 import sqlite3
 import threading
@@ -52,6 +53,12 @@ CREATE TABLE IF NOT EXISTS tracks (
     alerted     INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (source_id, track_id)
 );
+CREATE TABLE IF NOT EXISTS zones (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    points      TEXT NOT NULL,          -- JSON list of [x, y], normalised 0..1 of the frame
+    created     TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS alerts (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     ts          TEXT NOT NULL,
@@ -61,7 +68,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     source      TEXT NOT NULL,
     last_seen   TEXT NOT NULL,
     message     TEXT NOT NULL,
-    snapshot    TEXT
+    snapshot    TEXT,
+    kind        TEXT NOT NULL DEFAULT 'missing'   -- 'missing' or 'zone'
 );
 """
 
@@ -89,6 +97,10 @@ class DetectionDB:
         if "track_id" not in cols:
             with self._conn:
                 self._conn.execute("ALTER TABLE detections ADD COLUMN track_id INTEGER")
+        acols = {r["name"] for r in self._conn.execute("PRAGMA table_info(alerts)")}
+        if "kind" not in acols:
+            with self._conn:
+                self._conn.execute("ALTER TABLE alerts ADD COLUMN kind TEXT NOT NULL DEFAULT 'missing'")
 
     def insert_many(self, rows: list) -> None:
         if not rows:
@@ -161,6 +173,29 @@ class DetectionDB:
                 out.append({"class": r["class_name"], "track_id": r["track_id"], "message": msg})
             return out
 
+    def add_alert(self, ts, source_id, track_id, class_name, source, last_seen, message, snapshot, kind) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO alerts (ts, source_id, track_id, class_name, source, last_seen, message, snapshot, kind) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (ts, source_id, track_id, class_name, source, last_seen, message, snapshot, kind))
+
+    def list_zones(self) -> list:
+        with self._lock:
+            rows = self._conn.execute("SELECT id, name, points, created FROM zones ORDER BY id").fetchall()
+        return [{"id": r["id"], "name": r["name"], "points": json.loads(r["points"]), "created": r["created"]}
+                for r in rows]
+
+    def add_zone(self, name: str, points: list, created: str) -> int:
+        with self._lock, self._conn:
+            cur = self._conn.execute("INSERT INTO zones (name, points, created) VALUES (?,?,?)",
+                                     (name, json.dumps(points), created))
+            return cur.lastrowid
+
+    def delete_zone(self, zone_id: int) -> bool:
+        with self._lock, self._conn:
+            return self._conn.execute("DELETE FROM zones WHERE id = ?", (zone_id,)).rowcount > 0
+
     def alerts_list(self, limit: int = 50) -> list:
         with self._lock:
             return [dict(r) for r in self._conn.execute(
@@ -168,7 +203,7 @@ class DetectionDB:
 
     def latest_alert(self):
         with self._lock:
-            r = self._conn.execute("SELECT id, ts, message FROM alerts ORDER BY id DESC LIMIT 1").fetchone()
+            r = self._conn.execute("SELECT id, ts, message, kind FROM alerts ORDER BY id DESC LIMIT 1").fetchone()
             return dict(r) if r else None
 
     @staticmethod

@@ -217,3 +217,124 @@
 
 // Print buttons (report page).
 document.querySelectorAll("[data-print]").forEach((b) => b.addEventListener("click", () => window.print()));
+
+// Zones: draw a rectangle or polygon on a camera feed, name it, save it. Corners are stored as 0..1 of the frame.
+(function () {
+  const zCard = document.getElementById("zones");
+  if (!zCard) return;
+  const nameEl = document.getElementById("z-name");
+  const saveBtn = document.getElementById("z-save");
+  const finishBtn = document.getElementById("z-finish");
+  const msg = document.getElementById("z-msg");
+  const list = document.getElementById("z-list");
+  let mode = null, pts = [], saved = [];
+  const canvases = () => [...document.querySelectorAll("canvas.zone-canvas")];
+  function esc(t) { return String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+  function pending() {
+    if (mode === "rect" && pts.length === 2) {
+      const [a, b] = pts;
+      return [[a[0], a[1]], [b[0], a[1]], [b[0], b[1]], [a[0], b[1]]];
+    }
+    if (mode === "poly" && pts.length >= 3) return pts;
+    return null;
+  }
+  function draw() {
+    for (const c of canvases()) {
+      const w = c.clientWidth, h = c.clientHeight;
+      if (c.width !== w) c.width = w;
+      if (c.height !== h) c.height = h;
+      const ctx = c.getContext("2d");
+      ctx.clearRect(0, 0, c.width, c.height);
+      for (const z of saved) shape(ctx, c, z.points, "#5b9dff", z.name, false);
+      if (mode) {
+        const p = pending() || pts;
+        if (p.length) shape(ctx, c, p, "#fbbf24", null, true);
+      }
+    }
+  }
+  function shape(ctx, c, points, color, label, dashed) {
+    if (!points.length) return;
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color + "33";
+    ctx.setLineDash(dashed ? [6, 4] : []);
+    ctx.beginPath();
+    points.forEach(([x, y], i) => {
+      const px = x * c.width, py = y * c.height;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    });
+    if (points.length > 2) ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    if (label) {
+      ctx.setLineDash([]);
+      ctx.fillStyle = color;
+      ctx.font = "13px system-ui, sans-serif";
+      ctx.fillText(label, points[0][0] * c.width + 6, points[0][1] * c.height + 16);
+    }
+    ctx.restore();
+  }
+  function setMode(m) {
+    mode = m; pts = [];
+    finishBtn.hidden = m !== "poly";
+    msg.textContent = m === "rect" ? "Click two opposite corners on the feed."
+      : m === "poly" ? "Click each corner in turn, then press Close polygon (3 or more corners)."
+      : "Pick Rectangle or Polygon, then click on a camera feed above.";
+    refresh();
+  }
+  function refresh() {
+    saveBtn.disabled = !(pending() && nameEl.value.trim());
+    draw();
+  }
+  document.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+  document.getElementById("z-cancel").addEventListener("click", () => { setMode(null); nameEl.value = ""; });
+  finishBtn.addEventListener("click", () => { if (pts.length >= 3) { msg.textContent = "Name it and save."; refresh(); } });
+  nameEl.addEventListener("input", refresh);
+  for (const c of canvases()) {
+    c.addEventListener("click", (e) => {
+      if (!mode) { msg.textContent = "Pick Rectangle or Polygon first."; return; }
+      const r = c.getBoundingClientRect();
+      const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+      const y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+      if (mode === "rect") {
+        if (pts.length === 2) pts = [];
+        pts.push([x, y]);
+        if (pts.length === 2) msg.textContent = "Name it and save.";
+      } else {
+        pts.push([x, y]);
+      }
+      refresh();
+    });
+  }
+  window.addEventListener("resize", draw);
+  if ("ResizeObserver" in window) {
+    const ro = new ResizeObserver(draw);
+    document.querySelectorAll(".feedwrap").forEach((w) => ro.observe(w));
+  }
+  document.querySelectorAll("img.feed").forEach((img) => img.addEventListener("load", draw));
+  async function loadZones() {
+    const r = await fetch("/api/zones", { cache: "no-store" });
+    if (r.ok) saved = await r.json();
+    list.innerHTML = saved.length ? saved.map((z) =>
+      `<tr><td>${esc(z.name)}</td><td>${z.points.length}</td><td><button type="button" class="danger" data-del="${z.id}">Delete</button></td></tr>`
+    ).join("") : `<tr><td colspan="3" class="muted">No zones yet.</td></tr>`;
+    draw();
+  }
+  saveBtn.addEventListener("click", async () => {
+    const p = pending();
+    if (!p || !nameEl.value.trim()) return;
+    const r = await fetch("/zones", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: nameEl.value.trim(), points: p }) });
+    const j = await r.json();
+    if (!r.ok) { msg.textContent = j.error || "Could not save."; return; }
+    msg.textContent = `Saved zone "${j.name}". Animals entering it will raise an alert.`;
+    nameEl.value = ""; pts = []; setMode(null); await loadZones();
+  });
+  list.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-del]");
+    if (!b) return;
+    await fetch(`/zones/${b.dataset.del}/delete`, { method: "POST", headers: { Accept: "application/json" } });
+    await loadZones();
+  });
+  loadZones();
+})();

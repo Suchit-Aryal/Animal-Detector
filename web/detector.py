@@ -139,6 +139,20 @@ def _track_for(box, tracked, min_iou: float = 0.5):
     return best
 
 
+def point_in_polygon(x: float, y: float, poly: list) -> bool:
+    """Ray casting. poly is a list of [x, y] pairs; the shape closes itself."""
+    inside = False
+    n = len(poly)
+    j = n - 1
+    for i in range(n):
+        xi, yi = poly[i]
+        xj, yj = poly[j]
+        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / ((yj - yi) or 1e-12) + xi:
+            inside = not inside
+        j = i
+    return inside
+
+
 def person_overlap(box, persons, iou_thr: float, contain_thr: float) -> bool:
     """True if an animal box belongs to a person: centre inside, IoU above iou_thr, or
     more than contain_thr of the animal box inside a person box."""
@@ -185,6 +199,10 @@ class EventLogger:
         self.last = {}          # (source_id, kind, name) -> last logged clock value
         self.known_tracks = set()  # (source_id, track_id) already logged once
         self._lock = threading.Lock()
+        self.zones_fn = None       # set by the app: returns the zones to watch (camera sources only)
+        self.in_zone = set()       # (source_id, track_id, zone_id) while the track is inside
+        self.zone_seen = {}        # (source_id, class, zone_id) -> last untracked zone alert clock
+        self.zone_cooldown = 60.0
 
     def log(self, source_id: str, source_label: str, clock: float, dets: list, annotated_frame,
             clip_time=None, ts_wall=None, is_camera=False) -> int:
@@ -215,7 +233,49 @@ class EventLogger:
                        "clock": clock, "ts": ts,
                        "snapshot": snap if (source_id, d.track_id) in new_tracks else None}
                       for d in dets if d.track_id is not None]
+        if is_camera and self.zones_fn is not None:
+            self._zone_alerts(source_id, source_label, clock, ts, dets, annotated_frame)
         return self.db.record_frame(source_id, source_label, is_camera, clock, ts, det_rows, track_rows)
+
+    def _zone_alerts(self, source_id, source_label, clock, ts, dets, frame):
+        """Alert when an animal's box centre enters a zone. A tracked animal alerts once per entry;
+        an untracked one alerts at most once per zone_cooldown seconds."""
+        zones = self.zones_fn()
+        if not zones:
+            return
+        h, w = frame.shape[:2]
+        snap = None
+        for d in dets:
+            if d.kind != "animal":
+                continue
+            cx = ((d.box[0] + d.box[2]) / 2) / w
+            cy = ((d.box[1] + d.box[3]) / 2) / h
+            for z in zones:
+                inside = point_in_polygon(cx, cy, z["points"])
+                if d.track_id is not None:
+                    key = (source_id, d.track_id, z["id"])
+                    if not inside:
+                        self.in_zone.discard(key)
+                        continue
+                    if key in self.in_zone:
+                        continue
+                    self.in_zone.add(key)
+                    who, tid = f"{d.name} #{d.track_id}", d.track_id
+                else:
+                    if not inside:
+                        continue
+                    k = (source_id, d.name, z["id"])
+                    prev = self.zone_seen.get(k)
+                    if prev is not None and clock - prev < self.zone_cooldown:
+                        continue
+                    self.zone_seen[k] = clock
+                    who, tid = d.name, 0
+                if snap is None:
+                    stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
+                    snap = f"{stamp}_{source_id}_zone.jpg".replace("/", "_")
+                    cv2.imwrite(str(self.snap_dir / snap), frame)
+                self.db.add_alert(ts, source_id, tid, d.name, source_label, ts,
+                                  f"{who} entered zone '{z['name']}' ({source_label})", snap, "zone")
 
 
 def process_media(path: Path, label: str, job: dict, detector: Detector, logger: EventLogger,

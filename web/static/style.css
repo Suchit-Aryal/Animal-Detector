@@ -129,3 +129,4 @@ input[name=source] { width: min(340px, 100%); }
   a { color:#000; text-decoration:none; }
   .tile img { height:90px; }
 }
+.zone-canvas { cursor:crosshair; }
