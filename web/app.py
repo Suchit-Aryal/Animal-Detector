@@ -38,7 +38,8 @@ app.config["MAX_CONTENT_LENGTH"] = CFG["max_upload_mb"] * 1024 * 1024
 
 SETTINGS_FILE = INSTANCE / "settings.json"
 TUNABLE = {"animal_conf", "person_conf", "person_override_conf", "suppress_animal_iou",
-           "suppress_containment", "animal_conf_per_class", "presence_seconds", "missing_alert_minutes"}
+           "suppress_containment", "animal_conf_per_class", "presence_seconds", "missing_alert_minutes",
+           "dedupe_seconds"}
 if SETTINGS_FILE.exists():  # thresholds saved from the Live page survive a restart
     try:
         CFG.update({k: v for k, v in json.loads(SETTINGS_FILE.read_text()).items() if k in TUNABLE})
@@ -130,8 +131,6 @@ def live():
     return render_template("live.html", page="live", jobs=jobs, cams=cams,
                            max_mb=CFG["max_upload_mb"], error=request.args.get("error"),
                            cam_error=request.args.get("cam_error"),
-                           settings_error=request.args.get("settings_error"),
-                           settings_saved=request.args.get("settings_saved"),
                            demo_loaded=db.demo_loaded(), empty=(db.summary()["animal"]["count"] == 0
                                                                and db.summary()["person"]["count"] == 0),
                            demo_msg=request.args.get("demo"),
@@ -187,11 +186,6 @@ def events_page():
     events = group_events(rows, gap)
     return render_template("events.html", page="events", events=events[:200], rng=rng, gap=int(gap),
                            ranges=list(RANGES) + ["all"], total_rows=len(rows))
-
-
-@app.route("/settings")
-def settings_page():
-    return redirect(url_for("live"))  # replaced in the settings batch
 
 
 @app.route("/animals")
@@ -527,35 +521,60 @@ def _unit(name: str, raw: str, lo: float = 0.0, hi: float = 1.0) -> float:
     return v
 
 
+SETTING_FIELDS = [
+    # (key, label, lo, hi, help)
+    ("animal_conf", "Animal confidence", 0, 1, "Lower finds more animals and more mistakes."),
+    ("person_conf", "Person detector threshold", 0, 1, "People found by the COCO model."),
+    ("person_override_conf", "Keep an animal anyway at confidence", 0, 1, "A very confident animal beside a person is kept."),
+    ("suppress_animal_iou", "Overlap with a person (IoU) that drops an animal", 0, 1, ""),
+    ("suppress_containment", "Share of an animal box inside a person box that drops it", 0, 1, ""),
+    ("presence_seconds", "Animal is present if seen within (seconds)", 1, 3600, "Used on the Animals page."),
+    ("missing_alert_minutes", "Missing alert after (minutes, 0 = off)", 0, 1440, "Raised for running cameras only."),
+    ("dedupe_seconds", "Log each class at most once per (seconds)", 1, 3600, "New tracks are always logged."),
+]
+
+
+def animal_class_names() -> list:
+    return sorted(set(detector.animal_names.values()))
+
+
+@app.route("/settings")
+def settings_page():
+    per = CFG.get("animal_conf_per_class") or {}
+    return render_template("settings.html", page="settings", fields=SETTING_FIELDS, cfg=CFG,
+                           classes=[(n, per.get(n, "")) for n in animal_class_names()],
+                           error=request.args.get("error"), saved=request.args.get("saved"),
+                           demo_loaded=db.demo_loaded())
+
+
 @app.route("/settings", methods=["POST"])
 def settings_save():
-    """Change the detection thresholds while the app runs. Takes effect on the next frame."""
+    """Change the thresholds while the app runs. Takes effect on the next frame."""
     try:
-        new = {
-            "animal_conf": _unit("Animal confidence", request.form.get("animal_conf", "")),
-            "person_conf": _unit("Person confidence", request.form.get("person_conf", "")),
-            "person_override_conf": _unit("Keep-anyway confidence", request.form.get("person_override_conf", "")),
-            "suppress_animal_iou": _unit("Overlap IoU", request.form.get("suppress_animal_iou", "")),
-            "suppress_containment": _unit("Containment", request.form.get("suppress_containment", "")),
-            "presence_seconds": _unit("Present window (seconds)", request.form.get("presence_seconds", ""), 1, 3600),
-            "missing_alert_minutes": _unit("Missing alert (minutes, 0 = off)",
-                                           request.form.get("missing_alert_minutes", ""), 0, 1440),
-        }
+        new = {k: _unit(label, request.form.get(k, ""), lo, hi) for k, label, lo, hi, _ in SETTING_FIELDS}
         per = {}
-        for part in (request.form.get("animal_conf_per_class") or "").split(","):
-            if not part.strip():
-                continue
-            name, _, val = part.partition("=")
-            name = name.strip().lower()
-            if not name or not _:
-                raise ValueError("per-class thresholds look like cow=0.6, goat=0.4")
-            per[name] = _unit(f"Threshold for {name}", val.strip())
+        for name in animal_class_names():
+            raw = (request.form.get(f"cls_{name}") or "").strip()
+            if raw:
+                per[name] = _unit(f"Threshold for {name}", raw)
         new["animal_conf_per_class"] = per
     except ValueError as exc:
-        return redirect(url_for("live", settings_error=str(exc)))
+        return redirect(url_for("settings_page", error=str(exc)))
     CFG.update(new)
+    logger.dedupe = float(CFG["dedupe_seconds"])
     SETTINGS_FILE.write_text(json.dumps({k: CFG[k] for k in TUNABLE}, indent=2))
-    return redirect(url_for("live", settings_saved=1))
+    return redirect(url_for("settings_page", saved=1))
+
+
+@app.route("/settings/reset", methods=["POST"])
+def settings_reset():
+    """Forget the saved values and go back to config.json."""
+    base = load_config()
+    CFG.update({k: base[k] for k in TUNABLE if k in base})
+    logger.dedupe = float(CFG["dedupe_seconds"])
+    if SETTINGS_FILE.exists():
+        SETTINGS_FILE.unlink()
+    return redirect(url_for("settings_page", saved=1))
 
 
 @app.route("/api/summary")
