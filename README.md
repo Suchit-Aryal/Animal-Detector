@@ -44,8 +44,8 @@ You need Python **3.11**, about 3 GB of disk and (optional) an NVIDIA GPU. Run e
 ### 1.1 Create an environment
 
 ```bash
-git clone <this repo's URL>
-cd <repo folder>
+git clone https://github.com/Suchit-Aryal/Animal-Detector.git
+cd Animal-Detector
 
 # Option A: conda (Linux / macOS / Windows)
 conda create -n animal-det python=3.11 -y
@@ -589,7 +589,7 @@ Only `results/weights/best.pt` (the final model) is tracked among the weight fil
 - **Credits:** Ultralytics YOLOv8; Google Open Images V7; the Mendeley Data authors of the herbivore and street-animal sets (`data/SOURCES.md`); PyTorch, OpenCV, Flask. Website ideas came from the public projects in Section 2.5 (ideas only, no code copied).
 - Built as a student computer-vision project, with AI agent assistants for coding and documentation.
 
-To cite this project: *Animal Detection on Streets (YOLOv8 fine-tuned on dog, goat, cow, cat, sheep), 2026, <repo URL>*.
+To cite this project: *Animal Detection on Streets (YOLOv8 fine-tuned on dog, goat, cow, cat, sheep), 2026, https://github.com/Suchit-Aryal/Animal-Detector*.
 
 ---
 
