@@ -77,6 +77,20 @@ notification* boxes on the Live page make alerts louder.
 - the server cameras are off. Live mode uses the visitor's own browser camera: one JPEG a second goes to `POST /api/frame`, which returns the detections and an annotated picture, logged like any other source
 - uploads are limited to 50 MB, and only the first 60 seconds of a video are analysed (frames every 10th)
 - demo data is loaded on every fresh start, so the pages are never empty
+- read-only for changes: Settings save and reset, zone add and delete, and demo load and clear return 403 and their controls are hidden. Visitors can still upload media and use the browser camera
+
+### Public demo: limits, privacy and headers
+
+Used when the site is public (the Space, or a laptop behind a tunnel). Local use is not affected by any of this.
+
+- per-visitor limits, keyed on the client address (`CF-Connecting-IP`, then `X-Forwarded-For`, read only in hosted mode): 20 uploads an hour and 90 browser frames a minute. Over the limit the site answers 429 or a message
+- at most 2 uploaded files are analysed at once (`max_upload_jobs`)
+- uploads are checked by their content (the first bytes must match a real image or video), and file names are cleaned
+- every 10 minutes, uploads, outputs, snapshots and detection rows older than 24 hours are deleted (`retention_hours`, `purge_every_s`). Demo rows are kept
+- the instance folder is capped at 2048 MB (`storage_cap_mb`); when it is over, the oldest files go first
+- responses carry `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and a Content-Security-Policy that allows scripts and images from this site only (inline styles are allowed). The folders are not listed
+- privacy: uploaded images and video and browser camera frames are processed on the owner's computer. Snapshots and log rows are kept up to 24 hours, then deleted
+- served by gunicorn with one worker and 4 threads, so the job list and the limits are shared by all visitors in one process
 
 The values come from the `hosted_overrides` block of `config.json`. `HOST`, `PORT` and `INSTANCE_DIR` environment variables override them. Local use does not need any of this.
 

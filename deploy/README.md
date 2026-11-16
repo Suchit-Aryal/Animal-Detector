@@ -84,7 +84,32 @@ Delete the Space after 10 days unless you decided to keep it.
 ## Limits to tell visitors
 
 - Free CPU is slow: one frame takes about a second, so the browser camera checks about once a second.
-- Anyone who opens the page can change Settings and Zones; these are shared by all visitors.
+- On the public demo, Settings and Zones are read-only (403). Locally, anyone with access can change them.
+- Uploads and camera frames are processed on the owner's computer, kept up to 24 hours, then deleted (see `web/README.md`).
+- Per-visitor limits: 20 uploads an hour, 90 browser frames a minute, 2 analyses at once.
 - Data (log, snapshots, zones, settings) is kept in memory and in `/tmp`; it is lost on restart.
 - The free Space may go to sleep after a long time with no visitors; the first visit wakes it (a minute or two).
 - The model was trained on a limited dataset and is not validated for real monitoring. See `web/README.md`.
+
+## Public demo from your own computer (Cloudflare tunnel)
+
+The tunnel is started by the owner and is not part of this folder. The site listens on `127.0.0.1` only,
+so the only way in is through the tunnel.
+
+Build the image from the folder that `deploy/build_space.sh` creates:
+
+```bash
+deploy/build_space.sh
+docker build -t animal-watch:latest deploy/hf_space
+```
+
+Run it (the name, port and limits below are the ones to use):
+
+```bash
+docker run -d --name animal-watch --restart unless-stopped \
+  -p 127.0.0.1:7860:7860 --memory 6g --cpus 3 animal-watch:latest
+```
+
+Check it: `curl -I http://127.0.0.1:7860/live` should give `200`, and `docker logs -f animal-watch` shows the start.
+Stop it with `docker stop animal-watch`. The demo data is loaded on each start, and uploads, snapshots and
+detection rows are deleted after 24 hours.

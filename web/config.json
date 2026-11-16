@@ -25,7 +25,13 @@
     "max_upload_mb": 50,
     "video_max_seconds": 60,
     "upload_frame_skip": 10,
-    "browser_frame_max_kb": 2048
+    "browser_frame_max_kb": 2048,
+    "max_upload_jobs": 2,
+    "upload_per_hour_per_ip": 20,
+    "frame_per_minute_per_ip": 90,
+    "retention_hours": 24,
+    "storage_cap_mb": 2048,
+    "purge_every_s": 600
   },
   "video_max_seconds": 0,
   "browser_frame_max_kb": 2048

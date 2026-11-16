@@ -1,10 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Settings</h1>
-<p class="muted">Changes apply to the next frame and are saved for the next start. Lower confidence finds more animals and more mistakes.</p>
+{% if not hosted %}<p class="muted">Changes apply to the next frame and are saved for the next start. Lower confidence finds more animals and more mistakes.</p>{% endif %}
 {% if error %}<p class="bad">{{ error }}</p>{% endif %}
 {% if saved %}<p class="ok-msg">Saved.</p>{% endif %}
 
+{% if hosted %}
+<section class="card">
+  <h2>Read-only on the public demo</h2>
+  <p class="muted">Settings can be read but not changed on this site. The owner runs the app on their own computer to change them.</p>
+</section>
+{% else %}
 <form method="post" action="{{ url_for('settings_save') }}">
 <section class="card">
   <h2>Detection and alerts</h2>
@@ -44,4 +50,5 @@
     {% if demo_loaded %}<form method="post" action="{{ url_for('demo_clear') }}" class="inline"><button type="submit" class="ghost">Clear demo data</button></form>{% endif %}
   </div>
 </section>
+{% endif %}
 {% endblock %}

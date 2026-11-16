@@ -9,6 +9,7 @@ visitor's browser camera posts one frame a second to /api/frame.
 """
 
 import base64
+import functools
 import re
 import threading
 import time
@@ -26,10 +27,11 @@ import json
 import numpy as np
 from flask import (Flask, Response, abort, jsonify, redirect, render_template, request,
                    send_from_directory, url_for)
-from werkzeug.utils import secure_filename
 
 from db import DetectionDB
 from events import group_events
+from hardening import (READ_ONLY_MESSAGE, SECURITY_HEADERS, RateLimiter, purge_older_than, safe_filename,
+                       sniff_kind, tree_bytes, trim_to_cap)
 from detector import (IMG_EXT, VID_EXT, CameraWorker, Detector, EventLogger, annotate, load_config,
                       process_media)
 
@@ -67,9 +69,45 @@ BROWSER_TRACKERS = OrderedDict()  # hosted: browser session id -> its own tracke
 BROWSER_BUSY = set()              # session ids with a frame in progress (one at a time per visitor)
 BROWSER_LOCK = threading.Lock()
 
+HOSTED = bool(CFG.get("hosted"))
+# Hosted abuse limits (set in config.json hosted_overrides). Not applied on the local app.
+UPLOAD_LIMIT = RateLimiter(CFG.get("upload_per_hour_per_ip", 20), 3600)
+FRAME_LIMIT = RateLimiter(CFG.get("frame_per_minute_per_ip", 90), 60)
+
 
 def allowed(name: str) -> bool:
     return Path(name).suffix.lower() in IMG_EXT | VID_EXT
+
+
+def client_ip() -> str:
+    """The visitor's address. Behind Cloudflare the real one is in CF-Connecting-IP. Only read on the
+    hosted site, which listens on 127.0.0.1 and is reached only through the tunnel."""
+    if HOSTED:
+        cf = (request.headers.get("CF-Connecting-IP") or "").strip()
+        if cf:
+            return cf
+        xff = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        if xff:
+            return xff
+    return request.remote_addr or "unknown"
+
+
+def read_only(view):
+    """Hosted site: refuse any change with 403. Local app: the view runs as before."""
+    @functools.wraps(view)
+    def wrapper(*args, **kwargs):
+        if HOSTED:
+            return Response(READ_ONLY_MESSAGE, status=403, mimetype="text/plain")
+        return view(*args, **kwargs)
+    return wrapper
+
+
+@app.after_request
+def hosted_headers(resp):
+    if HOSTED:
+        for key, value in SECURITY_HEADERS.items():
+            resp.headers[key] = value
+    return resp
 
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?)?$")
@@ -194,14 +232,30 @@ def upload():
         return redirect(url_for("live", error="Choose a file first."))
     if not allowed(f.filename):
         return redirect(url_for("live", error="Unsupported file type. Use a video (mp4, avi, mov, mkv, webm) or an image (jpg, png, bmp, webp)."))
+    ext = Path(f.filename).suffix.lower()
+    if HOSTED:
+        if not UPLOAD_LIMIT.allow(client_ip()):
+            return redirect(url_for("live", error="Too many uploads from your connection. Try again in an hour."))
+        if tree_bytes(INSTANCE) >= int(CFG.get("storage_cap_mb", 2048)) * 1024 * 1024:
+            return redirect(url_for("live", error="Storage on this site is full. Try again later."))
+    # Check the content, not only the name: the first bytes must match the kind the extension claims.
+    want = "image" if ext in IMG_EXT else "video"
+    head = f.stream.read(16)
+    f.stream.seek(0)
+    if sniff_kind(head) != want:
+        return redirect(url_for("live", error=f"That file is not a real {want} in the {ext} format."))
     job_id = uuid.uuid4().hex[:10]
-    name = secure_filename(f.filename) or "upload"
-    path = UPLOADS / f"{job_id}_{name}"
-    f.save(path)
+    name = safe_filename(f.filename, ext)
     job = {"id": job_id, "name": name, "status": "queued", "progress": 0, "outputs": [],
            "counts": None, "error": None, "started": time.time()}
-    with JOBS_LOCK:
+    with JOBS_LOCK:  # check and add in one step, so two uploads at once cannot both pass the limit
+        if HOSTED:
+            busy = sum(1 for j in JOBS.values() if j["status"] in ("queued", "running"))
+            if busy >= int(CFG.get("max_upload_jobs", 2)):
+                return redirect(url_for("live", error="Other analyses are running. Try again in a few minutes."))
         JOBS[job_id] = job
+    path = UPLOADS / f"{job_id}_{name}"
+    f.save(path)
     threading.Thread(target=run_job, args=(job, path, name), daemon=True).start()
     return redirect(url_for("job_page", job_id=job_id))
 
@@ -238,6 +292,7 @@ def inject_hosted():
 
 
 @app.route("/camera/start", methods=["POST"])
+@read_only
 def camera_start():
     if CFG.get("hosted"):
         return redirect(url_for("live", cam_error="Server cameras are off on the hosted site. Use your browser camera."))
@@ -252,6 +307,7 @@ def camera_start():
 
 
 @app.route("/camera/<cam_id>/stop", methods=["POST"])
+@read_only
 def camera_stop(cam_id):
     worker = CAMERAS.pop(cam_id, None)
     if worker is None:
@@ -435,6 +491,7 @@ def api_zones():
 
 
 @app.route("/zones", methods=["POST"])
+@read_only
 def zone_add():
     """Save a zone drawn on a camera feed. Points are [x, y] in 0..1 of the frame."""
     data = request.get_json(silent=True) or {}
@@ -453,6 +510,7 @@ def zone_add():
 
 
 @app.route("/zones/<int:zone_id>/delete", methods=["POST"])
+@read_only
 def zone_delete(zone_id):
     db.delete_zone(zone_id)
     if request.headers.get("Accept", "").startswith("application/json"):
@@ -461,6 +519,7 @@ def zone_delete(zone_id):
 
 
 @app.route("/demo/load", methods=["POST"])
+@read_only
 def demo_load():
     names = [p.name for p in SNAPS.glob("*.jpg")][:200]
     db.load_demo(names, datetime.now().astimezone())
@@ -468,6 +527,7 @@ def demo_load():
 
 
 @app.route("/demo/clear", methods=["POST"])
+@read_only
 def demo_clear():
     db.clear_demo()
     return redirect(url_for("live"))
@@ -566,6 +626,7 @@ def settings_page():
 
 
 @app.route("/settings", methods=["POST"])
+@read_only
 def settings_save():
     """Change the thresholds while the app runs. Takes effect on the next frame."""
     try:
@@ -585,6 +646,7 @@ def settings_save():
 
 
 @app.route("/settings/reset", methods=["POST"])
+@read_only
 def settings_reset():
     """Forget the saved values and go back to config.json."""
     base = load_config()
@@ -623,6 +685,8 @@ def api_frame():
     sid = re.sub(r"[^A-Za-z0-9]", "", request.args.get("session", ""))[:32]
     if len(sid) < 8:
         return jsonify(error="missing session id"), 400
+    if HOSTED and not FRAME_LIMIT.allow(client_ip()):
+        return jsonify(error="Too many frames from your connection. Send one a second."), 429
     data = request.get_data(cache=False)
     if not data:
         return jsonify(error="empty body: send a JPEG frame"), 400
@@ -651,8 +715,33 @@ def api_frame():
         image="data:image/jpeg;base64," + base64.b64encode(jpg.tobytes()).decode() if ok else None)
 
 
+def cleanup_loop():
+    """Hosted only. Every purge_every_s: delete uploads, outputs and snapshots older than retention_hours,
+    and the detection rows of the same age (demo rows are kept). Then, if the instance folders are over
+    storage_cap_mb, delete the oldest files until they fit. Finished jobs that old are forgotten too."""
+    keep_s = float(CFG.get("retention_hours", 24)) * 3600
+    cap = int(CFG.get("storage_cap_mb", 2048)) * 1024 * 1024
+    while True:
+        time.sleep(float(CFG.get("purge_every_s", 600)))
+        try:
+            files = purge_older_than([UPLOADS, OUTPUTS, SNAPS], keep_s)
+            cutoff = datetime.now().astimezone() - timedelta(seconds=keep_s)
+            rows = db.purge_before(cutoff.isoformat(timespec="seconds"))
+            with JOBS_LOCK:
+                for jid in [j for j, job in JOBS.items()
+                            if job["status"] in ("done", "error") and job["started"] < time.time() - keep_s]:
+                    JOBS.pop(jid, None)
+            trimmed = trim_to_cap([UPLOADS, OUTPUTS, SNAPS], cap)
+            if files or trimmed or any(rows.values()):
+                app.logger.info("cleanup: %d files, %d over the storage cap, rows %s", files, trimmed, rows)
+        except Exception:
+            app.logger.exception("cleanup failed")
+
+
 # Start-up work. Runs when the module is imported, so it also runs under gunicorn in the container.
 threading.Thread(target=alert_loop, daemon=True).start()
+if HOSTED:
+    threading.Thread(target=cleanup_loop, daemon=True).start()
 if CFG.get("hosted") and not db.demo_loaded():
     # The Space's disk is wiped on restart, so put demo rows in on every fresh start.
     db.load_demo([], datetime.now().astimezone())

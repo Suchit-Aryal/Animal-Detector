@@ -18,13 +18,17 @@
 {% if empty %}
 <div class="card empty">
   <h2>Nothing logged yet</h2>
+  {% if hosted %}
+  <p class="muted">Upload a clip or use your browser camera below. Sample data is not loaded on the public demo (read-only).</p>
+  {% else %}
   <p class="muted">Upload a clip or start a camera below. Or load sample data to see the pages filled in.</p>
   <form method="post" action="{{ url_for('demo_load') }}"><button type="submit">Load demo data</button></form>
+  {% endif %}
 </div>
 {% elif demo_loaded %}
 <div class="demo-note row no-print">
   <span>Showing <strong>demo data</strong> (invented, for looking around). Real detections are kept apart.</span>
-  <form method="post" action="{{ url_for('demo_clear') }}" class="inline"><button type="submit" class="ghost">Clear demo data</button></form>
+  {% if not hosted %}<form method="post" action="{{ url_for('demo_clear') }}" class="inline"><button type="submit" class="ghost">Clear demo data</button></form>{% endif %}
 </div>
 {% endif %}
 <div class="row notify no-print">
@@ -41,6 +45,10 @@
   </form>
   {% if error %}<p class="bad">{{ error }}</p>{% endif %}
   <p class="muted">Max {{ max_mb }} MB. Frames are sampled (every few frames), so long clips take a while.{% if hosted %} On this site only the first {{ cfg.video_max_seconds | int }} s of a video are analysed.{% endif %}</p>
+  {% if hosted %}
+  <p class="muted" id="privacy-note"><strong>Privacy.</strong> Uploaded files and browser camera frames are processed on the owner's computer.
+     Snapshots and log rows are kept for up to 24 hours, then deleted. Nothing is shared with anyone else.</p>
+  {% endif %}
 </section>
 
 {% if hosted %}
@@ -101,6 +109,9 @@
 
 <section class="card" id="zones">
   <h2>Zones: alert when an animal enters</h2>
+  {% if hosted %}
+  <p class="muted">Read-only on the public demo. Zones are set on the owner's copy of the app.</p>
+  {% else %}
   <p class="muted">Draw on a running camera feed. A zone applies to every camera. An alert fires when an animal's box centre goes inside (a tracked animal alerts once per entry).</p>
   <div class="row">
     <button type="button" class="ghost" data-mode="rect">Rectangle</button>
@@ -113,11 +124,12 @@
     <button type="button" id="z-save" disabled>Save zone</button>
   </div>
   <p id="z-msg" class="muted">Pick Rectangle or Polygon, then click on a camera feed above.</p>
+  {% endif %}
   <table>
     <thead><tr><th>Zone</th><th>Corners</th><th></th></tr></thead>
     <tbody id="z-list">
     {% for z in zones %}<tr><td>{{ z.name }}</td><td>{{ z.points | length }}</td>
-      <td><button type="button" class="danger" data-del="{{ z.id }}">Delete</button></td></tr>
+      <td>{% if not hosted %}<button type="button" class="danger" data-del="{{ z.id }}">Delete</button>{% endif %}</td></tr>
     {% else %}<tr><td colspan="3" class="muted">No zones yet.</td></tr>{% endfor %}
     </tbody>
   </table>

@@ -221,7 +221,7 @@ document.querySelectorAll("[data-print]").forEach((b) => b.addEventListener("cli
 // Zones: draw a rectangle or polygon on a camera feed, name it, save it. Corners are stored as 0..1 of the frame.
 (function () {
   const zCard = document.getElementById("zones");
-  if (!zCard) return;
+  if (!zCard || !document.getElementById("z-save")) return;  // no zone editor on the read-only hosted site
   const nameEl = document.getElementById("z-name");
   const saveBtn = document.getElementById("z-save");
   const finishBtn = document.getElementById("z-finish");

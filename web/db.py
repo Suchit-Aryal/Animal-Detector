@@ -196,6 +196,20 @@ class DetectionDB:
         with self._lock, self._conn:
             return self._conn.execute("DELETE FROM zones WHERE id = ?", (zone_id,)).rowcount > 0
 
+    def purge_before(self, cutoff_iso: str) -> dict:
+        """Hosted site: delete real (non-demo) rows whose wall-clock time is before cutoff_iso.
+        Demo rows are never removed. Returns the number of rows deleted per table."""
+        with self._lock, self._conn:
+            det = self._conn.execute("DELETE FROM detections WHERE ts < ? AND source != ?",
+                                     (cutoff_iso, self.DEMO_SOURCE)).rowcount
+            al = self._conn.execute("DELETE FROM alerts WHERE ts < ? AND source != ?",
+                                    (cutoff_iso, self.DEMO_SOURCE)).rowcount
+            tr = self._conn.execute("DELETE FROM tracks WHERE last_ts < ? AND source_id != ?",
+                                    (cutoff_iso, self.DEMO_SOURCE_ID)).rowcount
+            so = self._conn.execute("DELETE FROM sources WHERE last_ts < ? AND source_id != ?",
+                                    (cutoff_iso, self.DEMO_SOURCE_ID)).rowcount
+        return {"detections": det, "alerts": al, "tracks": tr, "sources": so}
+
     def alerts_list(self, limit: int = 50) -> list:
         with self._lock:
             return [dict(r) for r in self._conn.execute(
