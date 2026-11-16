@@ -40,5 +40,6 @@
   <button type="button" class="lb-nav" id="lb-next" aria-label="Next">&rsaquo;</button>
 </div>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
+{% if hosted %}<script src="{{ url_for('static', filename='camera.js') }}"></script>{% endif %}
 </body>
 </html>

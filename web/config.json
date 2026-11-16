@@ -17,5 +17,16 @@
   "suppress_containment": 0.7,
   "person_override_conf": 0.8,
   "presence_seconds": 30,
-  "missing_alert_minutes": 0
+  "missing_alert_minutes": 0,
+  "hosted_overrides": {
+    "host": "0.0.0.0",
+    "port": 7860,
+    "instance_dir": "/tmp/animal-watch",
+    "max_upload_mb": 50,
+    "video_max_seconds": 60,
+    "upload_frame_skip": 10,
+    "browser_frame_max_kb": 2048
+  },
+  "video_max_seconds": 0,
+  "browser_frame_max_kb": 2048
 }

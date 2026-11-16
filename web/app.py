@@ -1,10 +1,14 @@
-"""Animal surveillance web app (Flask). Binds to 127.0.0.1 only.
+"""Animal surveillance web app (Flask). Binds to 127.0.0.1 only, unless HOSTED=1 (Hugging Face Space).
 
 Run from the project root:
     ~/.conda/envs/animal-det/bin/python web/app.py
 Then open http://127.0.0.1:5055/
+
+Hosted (container, see deploy/): HOSTED=1 gunicorn on 0.0.0.0:7860. No server-side camera; the
+visitor's browser camera posts one frame a second to /api/frame.
 """
 
+import base64
 import re
 import threading
 import time
@@ -13,16 +17,20 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode
 
+from collections import OrderedDict
+
+import cv2
 import csv
 import io
 import json
+import numpy as np
 from flask import (Flask, Response, abort, jsonify, redirect, render_template, request,
                    send_from_directory, url_for)
 from werkzeug.utils import secure_filename
 
 from db import DetectionDB
 from events import group_events
-from detector import (IMG_EXT, VID_EXT, CameraWorker, Detector, EventLogger, load_config,
+from detector import (IMG_EXT, VID_EXT, CameraWorker, Detector, EventLogger, annotate, load_config,
                       process_media)
 
 WEB = Path(__file__).resolve().parent
@@ -55,6 +63,9 @@ logger.zones_fn = db.list_zones
 JOBS = {}          # job_id -> dict (in memory; the log itself is in SQLite)
 JOBS_LOCK = threading.Lock()
 CAMERAS = {}       # cam_id -> CameraWorker
+BROWSER_TRACKERS = OrderedDict()  # hosted: browser session id -> its own tracker model (last 8 kept)
+BROWSER_BUSY = set()              # session ids with a frame in progress (one at a time per visitor)
+BROWSER_LOCK = threading.Lock()
 
 
 def allowed(name: str) -> bool:
@@ -208,7 +219,7 @@ def api_job(job_id):
     job = JOBS.get(job_id)
     if job is None:
         abort(404)
-    return jsonify({k: job.get(k) for k in ("status", "progress", "outputs", "counts", "error", "markers", "duration")})
+    return jsonify({k: job.get(k) for k in ("status", "progress", "outputs", "counts", "error", "markers", "duration", "truncated")})
 
 
 @app.route("/outputs/<path:name>")
@@ -221,8 +232,15 @@ def snapshots(name):
     return send_from_directory(SNAPS, name)
 
 
+@app.context_processor
+def inject_hosted():
+    return {"hosted": bool(CFG.get("hosted"))}
+
+
 @app.route("/camera/start", methods=["POST"])
 def camera_start():
+    if CFG.get("hosted"):
+        return redirect(url_for("live", cam_error="Server cameras are off on the hosted site. Use your browser camera."))
     source = (request.form.get("source") or "").strip()
     if not source:
         return redirect(url_for("live", cam_error="Enter a webcam index (0, 1, ...) or an IP camera URL."))
@@ -244,6 +262,8 @@ def camera_stop(cam_id):
 
 @app.route("/camera/<cam_id>/stream")
 def camera_stream(cam_id):
+    if CFG.get("hosted"):
+        abort(404)
     worker = CAMERAS.get(cam_id)
     if worker is None:
         abort(404)
@@ -584,9 +604,62 @@ def api_summary():
     return jsonify(data)
 
 
+def browser_tracker(sid: str):
+    """One tracker model per visitor, so track IDs never mix between visitors. Keeps the last 8."""
+    with BROWSER_LOCK:
+        tracker = BROWSER_TRACKERS.pop(sid, None)
+        if tracker is None:
+            tracker = detector.new_tracker()
+        BROWSER_TRACKERS[sid] = tracker
+        while len(BROWSER_TRACKERS) > 8:
+            BROWSER_TRACKERS.popitem(last=False)
+        return tracker
+
+
+@app.route("/api/frame", methods=["POST"])
+def api_frame():
+    """One JPEG frame from a visitor's browser camera. Runs the same detector and logger as an
+    uploaded clip, with source 'browser-<session>'. Returns the detections and an annotated JPEG."""
+    sid = re.sub(r"[^A-Za-z0-9]", "", request.args.get("session", ""))[:32]
+    if len(sid) < 8:
+        return jsonify(error="missing session id"), 400
+    data = request.get_data(cache=False)
+    if not data:
+        return jsonify(error="empty body: send a JPEG frame"), 400
+    if len(data) > int(CFG.get("browser_frame_max_kb", 2048)) * 1024:
+        return jsonify(error="frame too large"), 413
+    frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        return jsonify(error="not a readable image"), 400
+    with BROWSER_LOCK:
+        if sid in BROWSER_BUSY:
+            return jsonify(error="previous frame still running"), 429
+        BROWSER_BUSY.add(sid)
+    try:
+        tracker = browser_tracker(sid)
+        animals, persons, sup = detector.detect(frame, tracker)
+        ann = annotate(frame, animals + persons)
+        n = logger.log(f"browser-{sid[:12]}", "browser camera", time.time(), animals + persons, ann,
+                       is_camera=True)
+        ok, jpg = cv2.imencode(".jpg", ann, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    finally:
+        with BROWSER_LOCK:
+            BROWSER_BUSY.discard(sid)
+    return jsonify(
+        animals=[{"class": a.name, "confidence": round(a.conf, 2), "track_id": a.track_id} for a in animals],
+        persons=len(persons), suppressed=sup, rows_logged=n,
+        image="data:image/jpeg;base64," + base64.b64encode(jpg.tobytes()).decode() if ok else None)
+
+
+# Start-up work. Runs when the module is imported, so it also runs under gunicorn in the container.
+threading.Thread(target=alert_loop, daemon=True).start()
+if CFG.get("hosted") and not db.demo_loaded():
+    # The Space's disk is wiped on restart, so put demo rows in on every fresh start.
+    db.load_demo([], datetime.now().astimezone())
+
+
 if __name__ == "__main__":
     host = CFG.get("host", "127.0.0.1")
-    if host != "127.0.0.1":
-        raise SystemExit("refusing to bind anything but 127.0.0.1")
-    threading.Thread(target=alert_loop, daemon=True).start()
+    if host != "127.0.0.1" and not CFG.get("hosted"):
+        raise SystemExit("refusing to bind anything but 127.0.0.1 (set HOSTED=1 for the Space)")
     app.run(host=host, port=CFG["port"], threaded=True, debug=False)

@@ -174,3 +174,21 @@ Not done, or limited:
 - Screenshots: the md-browser screenshot timed out again and headless Chrome is not installed here, so no page images were saved. Checks were DOM checks, computed colours and one saved frame.
 - The dark theme colours were checked through computed styles, not by eye. Phone widths were not re-checked in this phase.
 - Desktop notifications were not tested with a granted permission.
+
+## Phase 6: hosted version (deploy/, 16 Nov 2026)
+
+Checked in the built container (Docker, CPU, 127.0.0.1 only):
+
+- `/live` shows the browser camera card and the hosted note. The server camera form is gone, and `/camera/start` redirects with a message.
+- `POST /api/frame`: 200 with detections and an annotated JPEG, about 0.2 s per frame after the first. Bad body, missing session and frames over 2 MB return 400, 400 and 413.
+- Browser camera in a real browser (headless Brave with a fake camera): Start, one frame a second, Stop. The frames are logged.
+- Upload an image: job done. Upload a 70 s video: the output is 60 s and the job is marked truncated.
+- Demo data is loaded on first start. Stats, Log, Gallery, Animals, Settings, Report and Events return 200. Zones save.
+
+Found and fixed while testing:
+
+- Frames returned 500 until `lap` was installed (ByteTrack needs it). Added to `deploy/requirements-container.txt`.
+- The CPU-only torch needs the matching torchvision from the same index; the PyPI build failed with `operator torchvision::nms does not exist`.
+
+Not checked: a real webcam (only the fake device), a real phone, and the Space itself (not deployed).
+

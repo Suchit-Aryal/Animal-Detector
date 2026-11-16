@@ -1,6 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Live / Upload</h1>
+{% if hosted %}
+<div class="card notice">
+  <p><strong>Hosted demo.</strong> Data resets when this Space restarts (demo data is loaded again on start).
+  Your camera stays in your browser: it sends one frame a second to this site for detection, and only the
+  snapshots of logged detections are kept. Uploads are limited to {{ max_mb }} MB and the first {{ (cfg.video_max_seconds or 0) | int }} s of a video.</p>
+</div>
+{% endif %}
 <div id="alert" class="alert" hidden></div>
 <div class="cards">
   <div class="card stat"><span class="label">Animals logged (all time)</span><span class="big" id="c-animals">–</span></div>
@@ -33,9 +40,28 @@
     <button type="submit">Analyse</button>
   </form>
   {% if error %}<p class="bad">{{ error }}</p>{% endif %}
-  <p class="muted">Max {{ max_mb }} MB. Frames are sampled (every few frames), so long clips take a while.</p>
+  <p class="muted">Max {{ max_mb }} MB. Frames are sampled (every few frames), so long clips take a while.{% if hosted %} On this site only the first {{ cfg.video_max_seconds | int }} s of a video are analysed.{% endif %}</p>
 </section>
 
+{% if hosted %}
+<section class="card" id="browser-cam">
+  <h2>2. Your camera (in your browser)</h2>
+  <p class="muted">Allow the camera when asked. One frame a second is sent to this site to be analysed. Detections are logged like any other source.</p>
+  <div class="row">
+    <button type="button" id="bc-start">Start camera</button>
+    <button type="button" id="bc-stop" class="ghost" disabled>Stop</button>
+    <span id="bc-status" class="pill">stopped</span>
+  </div>
+  <p id="bc-msg" class="bad" hidden></p>
+  <div class="feedwrap" id="bc-wrap" hidden>
+    <img class="feed" id="bc-feed" alt="annotated view from your camera">
+    <canvas class="zone-canvas" aria-label="zones drawn over the feed"></canvas>
+  </div>
+  <video id="bc-video" playsinline muted hidden></video>
+  <canvas id="bc-grab" hidden></canvas>
+  <p class="muted" id="bc-counts"></p>
+</section>
+{% else %}
 <section class="card">
   <h2>2. Live camera</h2>
   <form method="post" action="{{ url_for('camera_start') }}">
@@ -64,6 +90,7 @@
     <p class="muted">No camera running.</p>
   {% endfor %}
 </section>
+{% endif %}
 
 <section class="card">
   <h2>Thresholds and alerts</h2>

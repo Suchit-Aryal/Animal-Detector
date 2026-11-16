@@ -12,6 +12,7 @@ Rules
 """
 
 import json
+import os
 import shutil
 import subprocess
 import threading
@@ -34,7 +35,18 @@ VID_EXT = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 
 
 def load_config() -> dict:
-    return json.loads((WEB / "config.json").read_text())
+    """config.json. With env HOSTED=1 (Hugging Face Space) the hosted_overrides block is applied:
+    bind 0.0.0.0:7860, instance files under /tmp, smaller uploads, video capped. HOST, PORT and
+    INSTANCE_DIR env vars override any of it (used for local tests)."""
+    cfg = json.loads((WEB / "config.json").read_text())
+    if os.environ.get("HOSTED") == "1":
+        cfg.update(cfg.get("hosted_overrides", {}))
+        cfg["hosted"] = True
+    cfg["host"] = os.environ.get("HOST", cfg.get("host", "127.0.0.1"))
+    cfg["port"] = int(os.environ.get("PORT", cfg.get("port", 5055)))
+    if os.environ.get("INSTANCE_DIR"):
+        cfg["instance_dir"] = os.environ["INSTANCE_DIR"]
+    return cfg
 
 
 def resolve(path_str: str) -> str:
@@ -311,6 +323,7 @@ def process_media(path: Path, label: str, job: dict, detector: Detector, logger:
     last_dets = []
     counts = {"animal": 0, "person": 0, "suppressed": 0, "rows_logged": 0}
     tracker = detector.new_tracker()  # this clip's own track IDs
+    max_s = float(cfg.get("video_max_seconds") or 0)
     job["markers"] = []  # {t, class} for the timeline on the job page
     job["duration"] = round(total / fps, 2) if total else None
     try:
@@ -319,6 +332,9 @@ def process_media(path: Path, label: str, job: dict, detector: Detector, logger:
             if not ok:
                 break
             t = idx / fps
+            if max_s and t >= max_s:  # hosted: only the first video_max_seconds are analysed
+                job["truncated"] = True
+                break
             if idx % skip == 0:
                 animals, persons, sup = detector.detect(frame, tracker)
                 last_dets = animals + persons

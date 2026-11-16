@@ -69,6 +69,17 @@ notification* boxes on the Live page make alerts louder.
 - Animal boxes that overlap a person are dropped (see the thresholds on the Live page), so people
   are not logged as animals.
 
+## Hosted version (Hugging Face Space)
+
+`HOSTED=1` switches the site to the public demo mode used in `deploy/`:
+
+- binds `0.0.0.0:7860`; instance files go to `/tmp/animal-watch` (lost on restart)
+- the server cameras are off. Live mode uses the visitor's own browser camera: one JPEG a second goes to `POST /api/frame`, which returns the detections and an annotated picture, logged like any other source
+- uploads are limited to 50 MB, and only the first 60 seconds of a video are analysed (frames every 10th)
+- demo data is loaded on every fresh start, so the pages are never empty
+
+The values come from the `hosted_overrides` block of `config.json`. `HOST`, `PORT` and `INSTANCE_DIR` environment variables override them. Local use does not need any of this.
+
 ## Settings: `web/config.json`
 
 - `animal_weights`: the animal model (default `results/weights/best.pt`).
