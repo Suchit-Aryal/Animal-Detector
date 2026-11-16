@@ -7,9 +7,9 @@ never logged as animals.
 
 ## User guide
 
-1. **Start the app** (needs Flask in the `animal-det` conda env), from the project root:
+1. **Start the app** (set up the environment first: see the root `README.md`; run from the project root):
 
-       ~/.conda/envs/animal-det/bin/python web/app.py
+       python web/app.py
 
    Open http://127.0.0.1:5055/ . The server only listens on 127.0.0.1.
 
@@ -98,6 +98,6 @@ changes are saved to `web/instance/settings.json` and win over `config.json` at 
 
 ## Tests
 
-    ~/.conda/envs/animal-det/bin/python -m unittest web/test_rules.py web/test_tracks.py web/test_features.py
+    python -m unittest web/test_rules.py web/test_tracks.py web/test_features.py
 
 `test_features.py` covers events, zones, demo data and the alert migration. None of the tests needs the model or Flask. See `web/QA.md` for the browser tests.

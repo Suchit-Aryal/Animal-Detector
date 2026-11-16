@@ -1,5 +1,5 @@
 # Failure cases (test set, conf >= 0.25, IoU 0.5)
-Model: /home/upicy/comp_vision/results/weights/best.pt. Green = ground truth, red = prediction. Counts of events over all 80 test images: wrong_class 12, miss 13, false_positive 6, group 1.
+Model: results/weights/best.pt. Green = ground truth, red = prediction. Counts of events over all 80 test images: wrong_class 12, miss 13, false_positive 6, group 1.
 Explanations list what the data shows; causes are not verified.
 
 ## group

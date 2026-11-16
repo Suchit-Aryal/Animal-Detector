@@ -42,7 +42,7 @@ else:
     raise SystemExit("PROJECT_PLAN.md not found: start Jupyter inside the project folder")
 ROOT = Path.cwd()
 sys.path.insert(0, str(ROOT / "src"))   # lets us import small helpers from src/ if we need them
-print("project root:", ROOT)
+print("project root folder:", ROOT.name)
 '''
 
 SHOW = '''

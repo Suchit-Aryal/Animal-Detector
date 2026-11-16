@@ -5,6 +5,8 @@ data/**/*.jpg
 data/**/*.png
 # weights, runs, envs
 *.pt
+# the final model is tracked (22 MB) so others can run the demo and website
+!results/weights/best.pt
 runs/
 .venv/
 __pycache__/
